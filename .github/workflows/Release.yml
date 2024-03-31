@@ -35,7 +35,7 @@ jobs:
         artifacts: "target/release/reaper_levitanus_plugin.dll"
         bodyFile: "body.md"
         allowUpdates: true
-  linux:
+  macos:
     runs-on: macOS-latest
     permissions:
       contents: write
