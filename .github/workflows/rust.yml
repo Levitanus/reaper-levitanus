@@ -1,0 +1,22 @@
+name: Publish Release
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v3
+    - run: cargo build --all --release --verbose
+    - run: rename libreaper reaper target/release/libreaper_levitanus_plugin.so
+    - uses: ncipollo/release-action@v1
+      with:
+        artifacts: "target/release/libreaper_levitanus_plugin.so"
+        bodyFile: "body.md"
+        allowUpdates: true
+
