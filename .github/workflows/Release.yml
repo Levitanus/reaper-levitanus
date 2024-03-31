@@ -21,4 +21,31 @@ jobs:
         artifacts: "target/release/reaper_levitanus_plugin.so"
         bodyFile: "body.md"
         allowUpdates: true
+  windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v3
+    - run: cargo build --all --release --verbose
+    - run: cd target\release\
+    - run: ren libreaper_levitanus_plugin.dll reaper_levitanus_plugin.dll
+    - uses: ncipollo/release-action@v1
+      with:
+        artifacts: "target/release/reaper_levitanus_plugin.dll"
+        bodyFile: "body.md"
+        allowUpdates: true
+  linux:
+    runs-on: macOS-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v3
+    - run: cargo build --all --release --verbose
+    - run: mv target/release/libreaper_levitanus_plugin.so target/release/reaper_levitanus_plugin.dlyb
+    - uses: ncipollo/release-action@v1
+      with:
+        artifacts: "target/release/reaper_levitanus_plugin.dlyb"
+        bodyFile: "body.md"
+        allowUpdates: true
 
