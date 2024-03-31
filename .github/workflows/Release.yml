@@ -8,7 +8,7 @@ env:
 
 jobs:
 
-  build:
+  linux:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -18,7 +18,7 @@ jobs:
     - run: mv target/release/libreaper_levitanus_plugin.so target/release/reaper_levitanus_plugin.so
     - uses: ncipollo/release-action@v1
       with:
-        artifacts: "target/release/libreaper_levitanus_plugin.so"
+        artifacts: "target/release/reaper_levitanus_plugin.so"
         bodyFile: "body.md"
         allowUpdates: true
 
