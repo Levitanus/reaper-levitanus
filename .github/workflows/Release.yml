@@ -28,7 +28,6 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - run: cargo build --all --release
-    - run: cd target\release\ && dir && ren libreaper_levitanus_plugin.dll reaper_levitanus_plugin.dll
     - uses: ncipollo/release-action@v1
       with:
         artifacts: "target/release/reaper_levitanus_plugin.dll"
@@ -45,7 +44,7 @@ jobs:
     - run: mv target/release/libreaper_levitanus_plugin.dylib target/release/reaper_levitanus_plugin.dylib
     - uses: ncipollo/release-action@v1
       with:
-        artifacts: "target/release/reaper_levitanus_plugin.dlyb"
+        artifacts: "target/release/reaper_levitanus_plugin.dylib"
         bodyFile: "body.md"
         allowUpdates: true
 
