@@ -1,0 +1,20 @@
+[package]
+edition = "2021"
+name = "reaper-test-extension-plugin"
+publish = false
+version = "0.1.0"
+
+[dependencies]
+env_logger = {workspace = true}
+log = {workspace = true}
+rea-rs = {workspace = true}
+rea-rs-low = {workspace = true}
+rea-rs-macros = {workspace = true}
+rea-rs-test = {workspace = true}
+reaper-levitanus = {path = "../reaper-levitanus"}
+
+fraction = {workspace = true}
+
+[lib]
+crate-type = ["cdylib"]
+name = "reaper_test_extension_plugin"
