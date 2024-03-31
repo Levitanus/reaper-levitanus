@@ -3,11 +3,11 @@ members = ["reaper-levitanus", "test", "plugin"]
 
 [workspace.dependencies]
 # rea-rs = {git = "https://github.com/Levitanus/rea-rs"}
-rea-rs = {version = "0.1.3", path = "../rea-rs-workspace/rea-rs"}
-rea-rs-low = {version = "0.1.3", path = "../rea-rs-workspace/low"}
-rea-rs-macros = {version = "0.1.3", path = "../rea-rs-workspace/macros"}
-rea-rs-test = {version = "0.1.3", path = "../rea-rs-workspace/rea-rs-test"}
-reaper-imgui = {version = "0.1.3", path = "../reaper-imgui/reaper-imgui"}
+rea-rs = {version = "0.1.3"}
+rea-rs-low = {version = "0.1.3"}
+rea-rs-macros = {version = "0.1.3"}
+rea-rs-test = {version = "0.1.3"}
+reaper-imgui = {version = "0.1.3"}
 
 derivative = "2.2"
 env_logger = "0.10"
@@ -24,5 +24,3 @@ tempfile = "3.0"
 
 custom_error = "1.9"
 thiserror = "1.0"
-
-musical-note = {version = "0.1", path = "../musical-note"}
