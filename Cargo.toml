@@ -7,7 +7,6 @@ rea-rs = {version = "0.1.3"}
 rea-rs-low = {version = "0.1.3"}
 rea-rs-macros = {version = "0.1.3"}
 rea-rs-test = {version = "0.1.3"}
-reaper-imgui = {version = "0.1.3"}
 
 derivative = "2.2"
 env_logger = "0.10"
