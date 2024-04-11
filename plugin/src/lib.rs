@@ -1,3 +1,4 @@
+use log::{log, Level};
 use rea_rs::{
     // keys::{FVirt, KeyBinding, VKeys},
     // IntEnum,
@@ -6,14 +7,16 @@ use rea_rs::{
 };
 use rea_rs_macros::reaper_extension_plugin;
 use reaper_levitanus::{
-    ffmpeg::render_video, normalization::normalize_all_takes_on_selected_items,
+    ffmpeg::{ffmpeg_gui, render_video},
+    normalization::normalize_all_takes_on_selected_items,
 };
 
 use std::error::Error;
 
 #[reaper_extension_plugin]
 fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
-    print!("reaper_levitanus extension... ");
+    env_logger::init();
+    log!(Level::Info, "reaper_levitanus extension... ");
     Reaper::init_global(context);
     let rpr = Reaper::get_mut();
     let res = rpr.register_action(
@@ -23,7 +26,7 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         None,
     );
     match res {
-        Err(err) => error_box("can not normalize takes", err.to_string()),
+        Err(err) => error_box("can not register normalize takes", err.to_string()),
         Ok(_) => (),
     }
     let res = rpr.register_action(
@@ -33,7 +36,7 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         None,
     );
     match res {
-        Err(err) => error_box("can not normalize takes", err.to_string()),
+        Err(err) => error_box("can not register normalize takes", err.to_string()),
         Ok(_) => (),
     }
     let res = rpr.register_action(
@@ -43,11 +46,19 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         None,
     );
     match res {
-        Err(err) => error_box("can not render video", err.to_string()),
+        Err(err) => error_box("can not register render video", err.to_string()),
         Ok(_) => (),
     }
-    // error_box("Test", "I work!");
-    // let temp_path = std::env::temp_dir();
+    let res = rpr.register_action(
+        "LEVITANUS_FFMPEG_GUI",
+        "ffmpeg gui",
+        |_: i32| ffmpeg_gui(),
+        None,
+    );
+    match res {
+        Err(err) => error_box("can not register ffmpeg gui", err.to_string()),
+        Ok(_) => (),
+    }
 
     Ok(())
 }
