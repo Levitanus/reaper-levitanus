@@ -9,5 +9,8 @@ General purpose collections of actions and tools for [Cocos Reaper](reaper.fm).
 Currently adds actions:
 - normalize_all_takes_on_selected_items
 - normalize_all_takes_on_selected_items (common gain)
+- Take Pitch envelope snap *
+    * Set snap for pitch envelope, or make it default, or turn off
+- Set Take pitch envelope range
 - render project video
     * builds render script for ffmpeg, that renders video items respect to current render settings. For now in early alpha stage.

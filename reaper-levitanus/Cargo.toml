@@ -9,7 +9,6 @@ version = "0.0.1"
 rea-rs = {workspace = true}
 rea-rs-low = {workspace = true}
 rea-rs-macros = {workspace = true}
-reaper-imgui = {workspace = true}
 
 env_logger = {workspace = true}
 log = {workspace = true}
@@ -20,12 +19,20 @@ open = "3.2.0"
 serde = {workspace = true, features = ["derive"]}
 serde_json = {workspace = true}
 thiserror = {workspace = true}
+anyhow = {workspace = true}
 regex = {workspace = true}
 lazy_static = {workspace = true}
 path-absolutize = {workspace = true}
 dyn-clone = {workspace = true}
 strum = {workspace = true, features=["derive"]}
 autopilot = {workspace = true}
+
+uuid = "1.8.0"
+ws = "0.9.2"
+egui = "0.27.2"
+eframe = "0.27.2"
+url = "2.5.0"
+int-enum = "1.1.2"
 
 [lib]
 crate-type = ["lib"]
