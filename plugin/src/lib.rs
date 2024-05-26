@@ -1,3 +1,4 @@
+use log::{log, Level};
 use rea_rs::{
     // keys::{FVirt, KeyBinding, VKeys},
     // IntEnum,
@@ -6,15 +7,19 @@ use rea_rs::{
 };
 use rea_rs_macros::reaper_extension_plugin;
 use reaper_levitanus::{
-    ffmpeg::render_video, normalization::normalize_all_takes_on_selected_items,
+    // ffmpeg::{gui::gui, render_video},
+    envelope_snap::register_envelope_actions,
+    normalization::normalize_all_takes_on_selected_items,
 };
 
 use std::error::Error;
 
 #[reaper_extension_plugin]
 fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
-    print!("reaper_levitanus extension... ");
+    env_logger::init();
+    log!(Level::Info, "reaper_levitanus extension... ");
     Reaper::init_global(context);
+    // Swell::load(plugin_context);
     let rpr = Reaper::get_mut();
     let res = rpr.register_action(
         "LEVITANUS_NORM_TAKES",
@@ -23,7 +28,7 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         None,
     );
     match res {
-        Err(err) => error_box("can not normalize takes", err.to_string()),
+        Err(err) => error_box("can not register normalize takes", err.to_string()),
         Ok(_) => (),
     }
     let res = rpr.register_action(
@@ -33,21 +38,28 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         None,
     );
     match res {
-        Err(err) => error_box("can not normalize takes", err.to_string()),
+        Err(err) => error_box("can not register normalize takes", err.to_string()),
         Ok(_) => (),
     }
-    let res = rpr.register_action(
-        "LEVITANUS_FFMPEG_RENDER_ALL",
-        "render project video",
-        |_: i32| render_video(),
-        None,
-    );
-    match res {
-        Err(err) => error_box("can not render video", err.to_string()),
+    match register_envelope_actions(rpr) {
+        Err(err) => error_box("can not register envelope actions", err.to_string()),
         Ok(_) => (),
     }
-    // error_box("Test", "I work!");
-    // let temp_path = std::env::temp_dir();
+    // let res = rpr.register_action(
+    //     "LEVITANUS_FFMPEG_RENDER_ALL",
+    //     "render project video",
+    //     |_: i32| render_video(),
+    //     None,
+    // );
+    // match res {
+    //     Err(err) => error_box("can not register render video", err.to_string()),
+    //     Ok(_) => (),
+    // }
+    // let res = rpr.register_action("LEVITANUS_FFMPEG_GUI", "ffmpeg gui", |_: i32| gui(), None);
+    // match res {
+    //     Err(err) => error_box("can not register ffmpeg gui", err.to_string()),
+    //     Ok(_) => (),
+    // }
 
     Ok(())
 }
