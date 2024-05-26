@@ -33,8 +33,8 @@ pub fn register_envelope_actions(rpr: &mut Reaper) -> Result<(), Box<dyn Error>>
         None,
     )?;
     rpr.register_action(
-        "LEVITANUS_PITCHEVN_SNAP_SEMINOTE",
-        "Take Pitch envelope snap SEMINOTE (Levitanus)",
+        "LEVITANUS_PITCHEVN_SNAP_SEMITONE",
+        "Take Pitch envelope snap SEMITONE (Levitanus)",
         move |_| {
             envelope_snap_range(
                 EnvelopeChange::Snap(EnvelopeSnap::Semitone),
@@ -69,7 +69,7 @@ pub fn register_envelope_actions(rpr: &mut Reaper) -> Result<(), Box<dyn Error>>
     )?;
     rpr.register_action(
         "LEVITANUS_PITCHEVN_SNAP_1_CENT",
-        "Take Pitch envelope snap 1 CENT1 (Levitanus)",
+        "Take Pitch envelope snap 1 CENT (Levitanus)",
         move |_| envelope_snap_range(EnvelopeChange::Snap(EnvelopeSnap::Cent), snap_1.clone()),
         None,
     )?;
