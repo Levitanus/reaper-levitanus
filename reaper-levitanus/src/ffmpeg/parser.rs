@@ -7,7 +7,6 @@ use lazy_static::lazy_static;
 use log::info;
 use path_absolutize::Absolutize;
 use rea_rs::Timer;
-use reaper_imgui::{Context, ImGui};
 use regex::Regex;
 
 use crate::ffmpeg::options::{Encoder, EncoderType, ParsedFilter};
@@ -31,25 +30,6 @@ lazy_static! {
     static ref OPT_ENUM_RE_DESC: Regex =
         Regex::new(r"^(?:[\w&&[^A-Z]]\w*)[\s\d]+[\.\w]\s(?<description>\w.+)")
             .expect("can not compile opts enum regex");
-}
-
-struct ParserGui {
-    _imgui: ImGui,
-    ctx: Context,
-}
-impl ParserGui {
-    fn new(imgui: ImGui, ctx: Context) -> Self {
-        Self { _imgui: imgui, ctx }
-    }
-}
-impl Timer for ParserGui {
-    fn run(&mut self) -> Result<(), Box<dyn Error>> {
-        todo!()
-    }
-
-    fn id_string(&self) -> String {
-        "ffmpeg_parser".to_string()
-    }
 }
 
 pub fn parse_all(out_dir: PathBuf) -> Result<(), Box<dyn Error>> {

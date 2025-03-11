@@ -9,6 +9,7 @@ use rea_rs_macros::reaper_extension_plugin;
 use reaper_levitanus::{
     // ffmpeg::{gui::gui, render_video},
     envelope_snap::register_envelope_actions,
+    ffmpeg::ffmpeg_gui,
     normalization::normalize_all_takes_on_selected_items,
 };
 
@@ -55,11 +56,16 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
     //     Err(err) => error_box("can not register render video", err.to_string()),
     //     Ok(_) => (),
     // }
-    // let res = rpr.register_action("LEVITANUS_FFMPEG_GUI", "ffmpeg gui", |_: i32| gui(), None);
-    // match res {
-    //     Err(err) => error_box("can not register ffmpeg gui", err.to_string()),
-    //     Ok(_) => (),
-    // }
+    let res = rpr.register_action(
+        "LEVITANUS_FFMPEG_GUI",
+        "ffmpeg gui",
+        |_: i32| ffmpeg_gui(),
+        None,
+    );
+    match res {
+        Err(err) => error_box("can not register ffmpeg gui", err.to_string()),
+        Ok(_) => (),
+    }
 
     Ok(())
 }
