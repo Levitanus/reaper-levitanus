@@ -9,36 +9,35 @@ use rea_rs::{
 };
 use serde::{Deserialize, Serialize};
 
+use vizia::prelude::{Data, Lens, LensValue, Wrapper};
+
 use super::filters::{Filter, ScaleAspectRationOption};
 use super::nodes::{Node, NodeContent, Pin};
+use super::options::{Encoder, Muxer, PixelFormat};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Lens, Data)]
 pub struct RenderSettings {
-    format: String,
-    resolution: Resolution,
-    codec: String,
-    codec_options: Vec<String>,
-    fps: Fraction,
-    pad_color: String,
+    pub muxer: Muxer,
+    pub encoder: Encoder,
+    pub fps: String,
+    pub pixel_format: PixelFormat,
+    pub resolution: Resolution,
+    pub pad_color: String,
 }
 impl Default for RenderSettings {
     fn default() -> Self {
         Self {
-            format: "mkv".to_string(),
+            muxer: Muxer::default(),
+            encoder: Encoder::default(),
+            fps: "3000/1001".to_string(),
+            pixel_format: PixelFormat::default(),
             resolution: Resolution::default(),
-            codec: "libx264".to_string(),
-            // codec_options: vec!["-crf".to_string(), "15".to_string()],
-            codec_options: vec!["-crf", "15", "-pix_fmt", "yuv420p"]
-                .into_iter()
-                .map(|s| s.to_string())
-                .collect(),
-            fps: Fraction::new(30000_u16, 1001_u16),
             pad_color: "DarkCyan".into(),
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Data)]
 pub struct Resolution {
     pub width: usize,
     pub height: usize,
@@ -100,15 +99,15 @@ impl Render {
             format!("[{}]", filter_nodes.last().unwrap().outputs[0].get_name()),
         ]);
         main_seq.push("-c:v".to_string());
-        main_seq.push(format!("{}", self.render_settings.codec));
-        main_seq.extend(self.render_settings.codec_options.clone());
+        // main_seq.push(format!("{}", self.render_settings.encoder));
+        // main_seq.extend(self.render_settings.encoder_options.clone());
         main_seq.push("-r".to_string());
         main_seq.push(format!("{}", self.render_settings.fps));
         main_seq.push(format!(
             "{}",
             timeline
                 .outfile
-                .with_extension(&self.render_settings.format)
+                // .with_extension(&self.render_settings.muxer)
                 .display()
         ));
 
@@ -169,7 +168,7 @@ pub struct TimeLine {
     _end: Position,
     resolution: Resolution,
     pad_color: String,
-    fps: Fraction,
+    fps: String,
     inputs: Vec<VideoInput>,
 }
 impl TimeLine {

@@ -1,6 +1,13 @@
 use std::{
+    fs::File,
+    io::BufReader,
+    path::PathBuf,
     process::{Child, Command},
-    sync::{Arc, Mutex},
+    sync::{
+        mpsc::{self, Receiver},
+        Arc, Mutex,
+    },
+    thread::spawn,
 };
 
 use log::{debug, error};
@@ -8,15 +15,25 @@ use rea_rs::{
     socket::{Broadcaster, SocketHandle},
     ControlSurface, ExtState, Reaper,
 };
+use render_settings::render_settings;
 use serde::{Deserialize, Serialize};
 use vizia::prelude::*;
 use vizia::{model::Model, Application, ApplicationError};
 
+use super::{
+    options::Muxer,
+    parser::{check_parsed_paths, muxers_path, parse_all, ParsingProgress},
+    RenderSettings,
+};
 use crate::LevitanusError;
+use small_widgets::widget_parser;
+
+mod render_settings;
+mod small_widgets;
 
 pub static BACKEND_ID_STRING: &str = "LevitanusFfmpegGui";
 pub static SOCKET_ADDRESS: &str = "127.0.0.1:49332";
-static PERSIST: bool = true;
+static PERSIST: bool = false;
 pub static EXT_SECTION: &str = "Levitanus";
 pub static EXT_STATE_KEY: &str = "FFMPEG_FrontState";
 
@@ -26,30 +43,6 @@ enum IppMessage {
     State(State),
     Mutate(StateMessage),
     Shutdown,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-enum StateMessage {
-    Inc,
-    Dec,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Lens)]
-struct State {
-    counter: u64,
-}
-impl Default for State {
-    fn default() -> Self {
-        State { counter: 0 }
-    }
-}
-impl State {
-    fn update(&mut self, msg: StateMessage) {
-        match msg {
-            StateMessage::Inc => self.counter += 1,
-            StateMessage::Dec => self.counter -= 1,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -131,6 +124,49 @@ impl ControlSurface for Backend {
 struct FrontState {
     gui_state: State,
     socket: SocketHandle<IppMessage>,
+    parsing_progress: ParsingProgress,
+    parsing_progress_f32: f32,
+    parser_channel: Option<Receiver<ParsingProgress>>,
+    muxers: Vec<Muxer>,
+}
+impl FrontState {
+    fn new(gui_state: State, socket: SocketHandle<IppMessage>) -> Self {
+        let parsing_progress = match check_parsed_paths(gui_state.json_path.clone()) {
+            true => ParsingProgress::Result(Ok(())),
+            false => ParsingProgress::Unparsed,
+        };
+        let muxers = Self::build_muxers_list(&gui_state.json_path, &parsing_progress)
+            .expect("can not build muxers list");
+        Self {
+            gui_state,
+            socket,
+            parsing_progress,
+            parsing_progress_f32: f32::default(),
+            parser_channel: None,
+            muxers,
+        }
+    }
+    fn parse(&mut self) {
+        let (tx, rx) = mpsc::channel::<ParsingProgress>();
+        self.parser_channel = Some(rx);
+        let path = self.gui_state.json_path.clone();
+        spawn(move || {
+            parse_all(path, tx).expect("can not parse all");
+        });
+    }
+    fn build_muxers_list(
+        json_path: &PathBuf,
+        progress: &ParsingProgress,
+    ) -> anyhow::Result<Vec<Muxer>> {
+        match progress {
+            ParsingProgress::Result(Ok(_)) => {
+                let file = File::open(muxers_path(json_path))?;
+                let reader = BufReader::new(file);
+                Ok(serde_json::from_reader(reader)?)
+            }
+            _ => Ok(vec![Muxer::default()]),
+        }
+    }
 }
 impl Model for FrontState {
     fn event(&mut self, cx: &mut EventContext, event: &mut Event) {
@@ -147,6 +183,24 @@ impl Model for FrontState {
                         IppMessage::Shutdown => cx.close_window(),
                     }
                 }
+                if let Some(rx) = self.parser_channel.as_ref() {
+                    match rx.try_recv() {
+                        Ok(v) => {
+                            match v {
+                                ParsingProgress::Progress(p) => self.parsing_progress_f32 = p,
+                                _ => (),
+                            }
+                            self.parsing_progress = v;
+                        }
+                        Err(e) => match e {
+                            mpsc::TryRecvError::Empty => (),
+                            mpsc::TryRecvError::Disconnected => {
+                                // self.parsing_progress = ParsingProgress::Result(Ok(()));
+                                self.parser_channel = None
+                            }
+                        },
+                    }
+                }
             }
             FrontMessage::Mutate(msg) => {
                 self.gui_state.update(msg.clone());
@@ -159,7 +213,46 @@ impl Model for FrontState {
                 self.socket.send(IppMessage::Shutdown).ok();
                 self.socket.shutdown_all().ok();
             }
+            FrontMessage::Parse => {
+                debug!("Recieved Parse message.");
+                self.parsing_progress = ParsingProgress::Progress(0.001);
+                self.parse();
+            }
         })
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+enum StateMessage {
+    VideoMuxer(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Lens)]
+struct State {
+    json_path: PathBuf,
+    render_settings: RenderSettings,
+}
+impl Default for State {
+    fn default() -> Self {
+        let rpr = Reaper::get();
+        let json_path = PathBuf::from(rpr.get_resource_path().expect("can not get resource path"))
+            .join("Data")
+            .join("reaper-levitanus");
+        State {
+            json_path,
+            render_settings: RenderSettings::default(),
+        }
+    }
+}
+impl State {
+    fn update(&mut self, msg: StateMessage) {
+        match msg {
+            StateMessage::VideoMuxer(json) => {
+                let muxer: Muxer =
+                    serde_json::from_str(&json).expect("can not deserialize current muxer");
+                self.render_settings.muxer = muxer;
+            }
+        }
     }
 }
 
@@ -167,6 +260,7 @@ enum FrontMessage {
     Frame,
     Mutate(StateMessage),
     Closed,
+    Parse,
 }
 
 pub fn front() -> Result<(), ApplicationError> {
@@ -189,16 +283,20 @@ pub fn front() -> Result<(), ApplicationError> {
             _ => panic!("not a state"),
         };
         debug!("front is building state");
-        FrontState { gui_state, socket }.build(cx);
+        FrontState::new(gui_state, socket).build(cx);
+        cx.emit(EnvironmentEvent::SetThemeMode(AppTheme::BuiltIn(
+            ThemeMode::DarkMode,
+        )));
 
-        HStack::new(cx, |cx| {
-            Button::new(cx, |cx| Label::new(cx, "Inc"))
-                .on_press(|ex| ex.emit(FrontMessage::Mutate(StateMessage::Inc)));
-            Label::new(cx, FrontState::gui_state.then(State::counter));
-            Button::new(cx, |cx| Label::new(cx, "Dec"))
-                .on_press(|ex| ex.emit(FrontMessage::Mutate(StateMessage::Dec)));
+        VStack::new(cx, |cx| {
+            VStack::new(cx, |cx| {
+                render_settings(cx);
+            });
+            // Parser Block
+            widget_parser(cx);
         });
     })
+    .title("FFMPEG render")
     .should_poll()
     .on_idle(|cx| {
         cx.emit(FrontMessage::Frame);

@@ -1,15 +1,21 @@
 use std::{
-    collections::HashMap, error::Error, ffi::OsStr, fs::OpenOptions, io::Write, path::PathBuf,
+    collections::HashMap,
+    error::Error,
+    ffi::OsStr,
+    fs::{File, OpenOptions},
+    io::Write,
+    path::PathBuf,
     process::Command,
+    sync::mpsc::{SendError, Sender},
 };
 
 use lazy_static::lazy_static;
-use log::info;
+use log::{debug, info};
 use path_absolutize::Absolutize;
-use rea_rs::Timer;
 use regex::Regex;
+use vizia::prelude::Data;
 
-use crate::ffmpeg::options::{Encoder, EncoderType, ParsedFilter};
+use crate::ffmpeg::options::{Encoder, EncoderType, ParsedFilter, PixelFormat};
 
 use super::options::{Muxer, Opt, OptionParameter};
 
@@ -31,31 +37,81 @@ lazy_static! {
         Regex::new(r"^(?:[\w&&[^A-Z]]\w*)[\s\d]+[\.\w]\s(?<description>\w.+)")
             .expect("can not compile opts enum regex");
 }
+static PARSER_STEP: f32 = 0.001;
 
-pub fn parse_all(out_dir: PathBuf) -> Result<(), Box<dyn Error>> {
-    parse_muxers(muxers_path(&out_dir))?;
-    parse_encoders(encoders_path(&out_dir))?;
-    parse_filters(filters_path(&out_dir))?;
+pub fn parse_all(
+    out_dir: PathBuf,
+    sender: impl Into<Option<Sender<ParsingProgress>>>,
+) -> Result<(), Box<dyn Error>> {
+    let mut sender: Option<Sender<ParsingProgress>> = sender.into();
+    let mut progress = 0.01;
+    if let Err(e) = parse_muxers(muxers_path(&out_dir), &mut progress, &mut sender) {
+        send_progress(ParsingProgress::Result(Err(e.to_string())), &mut sender)?;
+        return Err(e);
+    };
+    progress = 0.25;
+    if let Err(e) = parse_encoders(encoders_path(&out_dir), &mut progress, &mut sender) {
+        send_progress(ParsingProgress::Result(Err(e.to_string())), &mut sender)?;
+        return Err(e);
+    };
+    progress = 0.5;
+    if let Err(e) = parse_filters(filters_path(&out_dir), &mut progress, &mut sender) {
+        send_progress(ParsingProgress::Result(Err(e.to_string())), &mut sender)?;
+        return Err(e);
+    };
+    progress = 0.9;
+    if let Err(e) = parse_pix_fmts(pix_fmts_path(&out_dir), &mut progress, &mut sender) {
+        send_progress(ParsingProgress::Result(Err(e.to_string())), &mut sender)?;
+        return Err(e);
+    };
+    send_progress(ParsingProgress::Result(Ok(())), &mut sender)?;
     Ok(())
 }
 pub fn check_parsed_paths(out_dir: PathBuf) -> bool {
     muxers_path(&out_dir).exists()
         && encoders_path(&out_dir).exists()
         && filters_path(&out_dir).exists()
+        && pix_fmts_path(&out_dir).exists()
 }
-fn muxers_path(out_dir: &PathBuf) -> PathBuf {
+pub fn muxers_path(out_dir: &PathBuf) -> PathBuf {
     out_dir.join("muxers.json")
 }
 
-fn encoders_path(out_dir: &PathBuf) -> PathBuf {
+pub fn encoders_path(out_dir: &PathBuf) -> PathBuf {
     out_dir.join("encoders.json")
 }
 
-fn filters_path(out_dir: &PathBuf) -> PathBuf {
+pub fn filters_path(out_dir: &PathBuf) -> PathBuf {
     out_dir.join("filters.json")
 }
 
-fn parse_muxers(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
+pub fn pix_fmts_path(out_dir: &PathBuf) -> PathBuf {
+    out_dir.join("pix_fmts.json")
+}
+
+fn inc_progress(
+    progress: &mut f32,
+    sender: &mut Option<Sender<ParsingProgress>>,
+) -> Result<(), SendError<ParsingProgress>> {
+    *progress += PARSER_STEP;
+    send_progress(ParsingProgress::Progress(progress.clone()), sender)
+}
+
+fn send_progress(
+    progress: ParsingProgress,
+    sender: &mut Option<Sender<ParsingProgress>>,
+) -> Result<(), SendError<ParsingProgress>> {
+    match sender {
+        Some(s) => s.send(progress),
+        None => Ok(()),
+    }
+}
+
+fn parse_muxers(
+    out_file: PathBuf,
+    progress: &mut f32,
+    sender: &mut Option<Sender<ParsingProgress>>,
+) -> Result<(), Box<dyn Error>> {
     let string = output_with_args(["-muxers"])?;
     let lines = string.lines();
     let mux_re = Regex::new(r"\s.*E\s+(?<name>\w+)\s+(?<description>\w.*)")?;
@@ -74,6 +130,7 @@ fn parse_muxers(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
         let name = cap["name"].to_string();
         let description = cap["description"].to_string();
         info!("Parsing muxer '{name}'");
+        inc_progress(progress, sender)?;
 
         let info_string = output_with_args(["-h", &format!("muxer={name}")])?;
         let mut extensions = None;
@@ -143,7 +200,11 @@ fn parse_muxers(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn parse_encoders(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
+fn parse_encoders(
+    out_file: PathBuf,
+    progress: &mut f32,
+    sender: &mut Option<Sender<ParsingProgress>>,
+) -> Result<(), Box<dyn Error>> {
     let string = output_with_args(["-encoders"])?;
     let lines = string.lines();
     let enc_re = Regex::new(r"^(?<flags>[\w\.]{6})\s(?<name>\w+)\s+(?<description>\w.*)")?;
@@ -160,6 +221,7 @@ fn parse_encoders(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
         let name = cap["name"].to_string();
         let description = cap["description"].to_string();
         info!("Parsing encoder '{name}'");
+        inc_progress(progress, sender)?;
 
         let info_string = output_with_args(["-h", &format!("encoder={name}")])?;
         let mut info = Vec::new();
@@ -242,7 +304,11 @@ fn parse_encoders(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn parse_filters(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
+fn parse_filters(
+    out_file: PathBuf,
+    progress: &mut f32,
+    sender: &mut Option<Sender<ParsingProgress>>,
+) -> Result<(), Box<dyn Error>> {
     let string = output_with_args(["-filters"])?;
     let lines = string.lines();
     let filter_re = Regex::new(
@@ -273,6 +339,7 @@ fn parse_filters(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
             continue;
         }
         info!("Parsing filter '{name}'");
+        inc_progress(progress, sender)?;
 
         let info_string = output_with_args(["-h", &format!("filter={name}")])?;
         let mut info = Vec::new();
@@ -336,6 +403,97 @@ fn parse_filters(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
         filters.push(filter);
     }
     let filters_string: String = serde_json::to_string(&filters)?;
+    info!(
+        "\ndamping filters_string to the file: {}\n",
+        out_file.absolutize()?.display()
+    );
+    let mut f = OpenOptions::new().write(true).create(true).open(out_file)?;
+    f.write_all(filters_string.as_bytes())?;
+    Ok(())
+}
+
+fn parse_pix_fmts(
+    out_file: PathBuf,
+    progress: &mut f32,
+    sender: &mut Option<Sender<ParsingProgress>>,
+) -> Result<(), Box<dyn Error>> {
+    let string = output_with_args(["-pix_fmts"])?;
+    let lines = string.lines();
+    let pix_fmt_re = Regex::new(
+        r"^(?<flags>[\w\.]{5})\s(?<name>\w+)\s+(?<nb_components>\d)\s+(?<bits_per_pixel>\d+)\s+(?<bit_depth>[\d-]+)",
+    )?;
+    let info_end_re = Regex::new(r".*AVOptions:$")?;
+
+    let mut pix_fmts = Vec::new();
+    info!("collecting pixel format...");
+    for mut line in lines {
+        line = line.trim();
+        // debug!("line: {}", line);
+        let Some(cap) = pix_fmt_re.captures(line) else {
+            continue;
+        };
+        // debug!("cap: {:#?}", cap);
+        let name = cap["name"].to_string();
+        // let description = cap["description"].to_string();
+        // if [""]
+        //     .into_iter()
+        //     .find(|n| {
+        //         if name.contains(*n) {
+        //             return true;
+        //         }
+        //         false
+        //     })
+        //     .is_some()
+        // {
+        //     info!("skipping '{name}'");
+        //     continue;
+        // }
+        info!("Parsing pixel format '{name}'");
+        inc_progress(progress, sender)?;
+
+        // let info_string = output_with_args(["-h", &format!("pix_fmt={name}")])?;
+        // debug!("info string: {}", info_string);
+        // let mut info = Vec::new();
+        let flags_string = cap["flags"].to_string();
+        let mut flags = flags_string.chars();
+        let input_support = match flags.next().ok_or("can not read a char")? {
+            'I' => true,
+            _ => false,
+        };
+        let output_support = match flags.next().ok_or("can not read a char")? {
+            'O' => true,
+            _ => false,
+        };
+        let hardware_accelerated = match flags.next().ok_or("can not read a char")? {
+            'H' => true,
+            _ => false,
+        };
+        let paletted = match flags.next().ok_or("can not read a char")? {
+            'P' => true,
+            _ => false,
+        };
+        let bitstream = match flags.next().ok_or("can not read a char")? {
+            'B' => true,
+            _ => false,
+        };
+        let nb_components: u8 = cap["nb_components"].parse()?;
+        let bits_per_pixel: u8 = cap["bits_per_pixel"].parse()?;
+        let bit_depth = cap["bit_depth"].to_string();
+
+        let filter = PixelFormat {
+            name,
+            input_support,
+            output_support,
+            hardware_accelerated,
+            paletted,
+            bitstream,
+            nb_components,
+            bits_per_pixel,
+            bit_depth,
+        };
+        pix_fmts.push(filter);
+    }
+    let filters_string: String = serde_json::to_string(&pix_fmts)?;
     info!(
         "\ndamping filters_string to the file: {}\n",
         out_file.absolutize()?.display()
@@ -411,6 +569,7 @@ fn parse_enum(line: &str, options: &mut Vec<Opt>) -> Result<ParseFlow, Box<dyn E
             let map = HashMap::from_iter([(cap["name"].to_string(), description)]);
             Some(OptionParameter::Enum(map))
         }
+        OptionParameter::Bool => None,
         p => {
             return Err(format!(
                 "Can not convert option parameter to enum: {:?}. The line was: {line}",
@@ -442,10 +601,17 @@ fn output_with_args(
     Ok(string)
 }
 
+#[derive(Debug, Clone, PartialEq, PartialOrd, Data)]
+pub enum ParsingProgress {
+    Progress(f32),
+    Result(Result<(), String>),
+    Unparsed,
+}
+
 #[test]
 fn test_parsing() -> Result<(), Box<dyn Error>> {
     std::env::set_var("RUST_LOG", "debug");
     env_logger::try_init()?;
-    parse_all(PathBuf::from("./"))?;
+    parse_all(PathBuf::from("./"), None)?;
     Ok(())
 }
