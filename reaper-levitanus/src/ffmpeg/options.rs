@@ -2,9 +2,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use vizia::prelude::Data;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Data)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Muxer {
     pub name: String,
     pub description: String,
@@ -16,7 +15,7 @@ pub struct Muxer {
     pub options: Vec<Opt>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Data)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Encoder {
     pub name: String,
     pub description: String,
@@ -31,7 +30,7 @@ pub struct Encoder {
     pub options: Vec<Opt>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Data)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ParsedFilter {
     pub name: String,
     pub description: String,
@@ -43,14 +42,14 @@ pub struct ParsedFilter {
     pub options: Vec<Opt>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Data)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum EncoderType {
     Video,
     Audio,
     Subtitle,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Data)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Opt {
     pub name: String,
     pub description: String,
@@ -58,7 +57,7 @@ pub struct Opt {
     pub default: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Data)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum OptionParameter {
     Int,
     String,
@@ -75,7 +74,7 @@ pub enum OptionParameter {
     Flags(HashMap<String, String>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Data)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PixelFormat {
     pub name: String,
     pub input_support: bool,

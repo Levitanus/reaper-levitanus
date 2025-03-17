@@ -13,7 +13,6 @@ use lazy_static::lazy_static;
 use log::{debug, info};
 use path_absolutize::Absolutize;
 use regex::Regex;
-use vizia::prelude::Data;
 
 use crate::ffmpeg::options::{Encoder, EncoderType, ParsedFilter, PixelFormat};
 
@@ -601,7 +600,7 @@ fn output_with_args(
     Ok(string)
 }
 
-#[derive(Debug, Clone, PartialEq, PartialOrd, Data)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum ParsingProgress {
     Progress(f32),
     Result(Result<(), String>),

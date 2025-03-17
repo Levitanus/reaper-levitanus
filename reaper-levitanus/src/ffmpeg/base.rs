@@ -9,17 +9,15 @@ use rea_rs::{
 };
 use serde::{Deserialize, Serialize};
 
-use vizia::prelude::{Data, Lens, LensValue, Wrapper};
-
 use super::filters::{Filter, ScaleAspectRationOption};
 use super::nodes::{Node, NodeContent, Pin};
 use super::options::{Encoder, Muxer, PixelFormat};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Lens, Data)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RenderSettings {
     pub muxer: Muxer,
     pub encoder: Encoder,
-    pub fps: String,
+    pub fps: Fraction,
     pub pixel_format: PixelFormat,
     pub resolution: Resolution,
     pub pad_color: String,
@@ -29,7 +27,7 @@ impl Default for RenderSettings {
         Self {
             muxer: Muxer::default(),
             encoder: Encoder::default(),
-            fps: "3000/1001".to_string(),
+            fps: Fraction::new(3000_u64, 1001_u64),
             pixel_format: PixelFormat::default(),
             resolution: Resolution::default(),
             pad_color: "DarkCyan".into(),
@@ -37,7 +35,7 @@ impl Default for RenderSettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Data)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Resolution {
     pub width: usize,
     pub height: usize,
@@ -168,7 +166,7 @@ pub struct TimeLine {
     _end: Position,
     resolution: Resolution,
     pad_color: String,
-    fps: String,
+    fps: Fraction,
     inputs: Vec<VideoInput>,
 }
 impl TimeLine {
