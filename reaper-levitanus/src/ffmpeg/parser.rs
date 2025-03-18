@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     error::Error,
     ffi::OsStr,
-    fs::{File, OpenOptions},
+    fs::OpenOptions,
     io::Write,
     path::PathBuf,
     process::Command,
@@ -10,13 +10,13 @@ use std::{
 };
 
 use lazy_static::lazy_static;
-use log::{debug, info};
+use log::info;
 use path_absolutize::Absolutize;
 use regex::Regex;
 
-use crate::ffmpeg::options::{Encoder, EncoderType, ParsedFilter, PixelFormat};
-
-use super::options::{Muxer, Opt, OptionParameter};
+use super::options::{
+    Encoder, EncoderType, Muxer, Opt, OptionParameter, ParsedFilter, PixelFormat,
+};
 
 lazy_static! {
     static ref OPT_RE: Regex =
@@ -487,19 +487,19 @@ fn parse_option(line: &str, mut options: &mut Vec<Opt>) -> Result<ParseFlow, Box
         return parse_enum(line, &mut options);
     };
     let parameter = match &cap["type"] {
-        "int" => OptionParameter::Int,
-        "int64" => OptionParameter::Int,
-        "string" => OptionParameter::String,
-        "float" => OptionParameter::Float,
-        "double" => OptionParameter::Float,
-        "boolean" => OptionParameter::Bool,
-        "binary" => OptionParameter::Binary,
-        "rational" => OptionParameter::Rational,
-        "duration" => OptionParameter::Duration,
-        "dictionary" => OptionParameter::Dictionary,
-        "color" => OptionParameter::Color,
-        "image_size" => OptionParameter::ImageSize,
-        "video_rate" => OptionParameter::FrameRate,
+        "int" => OptionParameter::Int(None),
+        "int64" => OptionParameter::Int(None),
+        "string" => OptionParameter::String(None),
+        "float" => OptionParameter::Float(None),
+        "double" => OptionParameter::Float(None),
+        "boolean" => OptionParameter::Bool(None),
+        "binary" => OptionParameter::Binary(None),
+        "rational" => OptionParameter::Rational(None),
+        "duration" => OptionParameter::Duration(None),
+        "dictionary" => OptionParameter::Dictionary(None),
+        "color" => OptionParameter::Color(None),
+        "image_size" => OptionParameter::ImageSize(None),
+        "video_rate" => OptionParameter::FrameRate(None),
         "flags" => OptionParameter::Flags(HashMap::new()),
         t => return Err(format!("unknown type: {t}. The line was: {line}").into()),
     };
@@ -540,15 +540,15 @@ fn parse_enum(line: &str, options: &mut Vec<Opt>) -> Result<ParseFlow, Box<dyn E
             hm.insert(cap["name"].to_string(), description);
             None
         }
-        OptionParameter::Int => {
+        OptionParameter::Int(_) => {
             let map = HashMap::from_iter([(cap["name"].to_string(), description)]);
             Some(OptionParameter::Enum(map))
         }
-        OptionParameter::String => {
+        OptionParameter::String(_) => {
             let map = HashMap::from_iter([(cap["name"].to_string(), description)]);
             Some(OptionParameter::Enum(map))
         }
-        OptionParameter::Bool => None,
+        OptionParameter::Bool(_) => None,
         p => {
             return Err(format!(
                 "Can not convert option parameter to enum: {:?}. The line was: {line}",

@@ -11,6 +11,8 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Error;
+use egui::style::ScrollStyle;
 use log::debug;
 use rea_rs::{
     socket::{self, Broadcaster, SocketHandle},
@@ -19,12 +21,13 @@ use rea_rs::{
 use serde::{Deserialize, Serialize};
 
 use super::{
-    options::Muxer,
+    options::{Muxer, Opt},
     parser::{check_parsed_paths, muxers_path, parse_all, ParsingProgress},
     RenderSettings,
 };
 use crate::LevitanusError;
 
+mod render_settings;
 mod small_widgets;
 
 pub static BACKEND_ID_STRING: &str = "LevitanusFfmpegGui";
@@ -96,7 +99,7 @@ impl ControlSurface for Backend {
                 match message {
                     IppMessage::Init => client.send(IppMessage::State(state.clone()))?,
                     IppMessage::State(state) => ext_state.set(state),
-                    IppMessage::Mutate(msg) => state.update(msg),
+                    IppMessage::Mutate(msg) => state.update(msg)?,
                     IppMessage::Shutdown => shutdown = true,
                 }
             }
@@ -118,7 +121,8 @@ impl ControlSurface for Backend {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 enum StateMessage {
-    VideoMuxer(String),
+    Muxer(Muxer),
+    MuxerOptions(Vec<Opt>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,28 +143,39 @@ impl Default for State {
     }
 }
 impl State {
-    fn update(&mut self, msg: StateMessage) {
+    fn update(&mut self, msg: StateMessage) -> anyhow::Result<()> {
         match msg {
-            StateMessage::VideoMuxer(json) => {
-                let muxer: Muxer =
-                    serde_json::from_str(&json).expect("can not deserialize current muxer");
+            StateMessage::Muxer(muxer) => {
                 self.render_settings.muxer = muxer;
             }
+            StateMessage::MuxerOptions(opts) => {
+                self.render_settings.muxer.options = opts;
+            }
         }
+        Ok(())
     }
+}
+
+#[derive(Debug)]
+enum ExitCode {
+    Shutdown,
+    Error(String),
 }
 
 #[derive(Debug)]
 enum FrontMessage {
     Parse,
     Exit,
+    Muxer(String),
+    MuxerOptions(Vec<Opt>),
+    Error(String),
 }
 
 #[derive(Debug)]
 struct Front {
     state: State,
     socket: SocketHandle<IppMessage>,
-    should_exit: bool,
+    exit_code: Option<ExitCode>,
     msg_rx: Receiver<FrontMessage>,
     msg_tx: Sender<FrontMessage>,
     parsing_progress: ParsingProgress,
@@ -174,13 +189,16 @@ impl Front {
             false => ParsingProgress::Unparsed,
         };
         let muxers = Self::build_muxers_list(&gui_state.json_path, &parsing_progress)
-            .expect("can not build muxers list");
+            .expect("can not build muxers list")
+            .into_iter()
+            .filter(|mux| mux.video_codec.is_some())
+            .collect();
 
         let (msg_tx, msg_rx) = channel();
         Self {
             state: gui_state,
             socket,
-            should_exit: false,
+            exit_code: None,
             msg_rx,
             msg_tx,
             parsing_progress,
@@ -210,11 +228,25 @@ impl Front {
             _ => Ok(vec![Muxer::default()]),
         }
     }
-    fn poll_messages(&mut self) {
+    fn mutate(&mut self, message: StateMessage) -> anyhow::Result<()> {
+        self.state.update(message.clone())?;
+        self.socket.send(IppMessage::Mutate(message))?;
+        Ok(())
+    }
+    fn poll_messages(&mut self) -> anyhow::Result<()> {
         for msg in self.msg_rx.try_iter().collect::<Vec<FrontMessage>>() {
             match msg {
                 FrontMessage::Parse => self.parse(),
-                FrontMessage::Exit => self.should_exit = true,
+                FrontMessage::Exit => self.exit_code = Some(ExitCode::Shutdown),
+                FrontMessage::Muxer(mux_name) => {
+                    if let Some(muxer) = self.muxers.iter().find(|mux| mux.name == mux_name) {
+                        self.mutate(StateMessage::Muxer(muxer.clone()))?;
+                    }
+                }
+                FrontMessage::MuxerOptions(opts) => {
+                    self.mutate(StateMessage::MuxerOptions(opts))?
+                }
+                FrontMessage::Error(e) => return Err(Error::msg(e)),
             }
         }
         if let Some(rx) = &self.parser_channel {
@@ -226,10 +258,11 @@ impl Front {
             match msg {
                 IppMessage::Init => panic!("recieved init message during the loop."),
                 IppMessage::State(s) => self.state = s,
-                IppMessage::Mutate(msg) => self.state.update(msg),
-                IppMessage::Shutdown => self.should_exit = true,
+                IppMessage::Mutate(msg) => self.state.update(msg)?,
+                IppMessage::Shutdown => self.exit_code = Some(ExitCode::Shutdown),
             }
         }
+        Ok(())
     }
     fn emit(&self, message: FrontMessage) {
         self.msg_tx
@@ -239,13 +272,21 @@ impl Front {
 }
 impl eframe::App for Front {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        self.poll_messages();
-        if self.should_exit {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        if let Err(e) = self.poll_messages() {
+            self.exit_code = Some(ExitCode::Error(e.to_string()));
+        }
+        if let Some(code) = &self.exit_code {
+            match code {
+                ExitCode::Shutdown => return ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                ExitCode::Error(e) => {
+                    self.widget_error_box(ctx, e);
+                    return;
+                }
+            }
         }
         egui::TopBottomPanel::bottom("footer").show(ctx, |ui| self.widget_parser(ctx, ui));
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Hello World!");
+            self.widget_render_settings(ctx, ui);
         });
         ctx.request_repaint_after(Duration::from_millis(200));
     }
@@ -269,7 +310,14 @@ pub fn front() -> anyhow::Result<()> {
     match eframe::run_native(
         "Levitanus FFMPEG render",
         native_options,
-        Box::new(|cc| Ok(Box::new(app))),
+        Box::new(|cc| {
+            cc.egui_ctx.style_mut(|s| {
+                let mut style = ScrollStyle::floating();
+                style.floating_allocated_width = 10.0;
+                s.spacing.scroll = style;
+            });
+            Ok(Box::new(app))
+        }),
     ) {
         Ok(r) => Ok(r),
         Err(e) => Err(LevitanusError::Unexpected(e.to_string()).into()),

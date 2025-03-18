@@ -48,4 +48,17 @@ impl Front {
             }
         });
     }
+
+    pub(crate) fn widget_error_box(&self, ctx: &egui::Context, error: impl AsRef<str>) {
+        Modal::new(Id::new("error")).show(ctx, |ui| {
+            ui.with_layout(Layout::top_down_justified(egui::Align::Center), |ui| {
+                ui.heading("Error!");
+                ui.label("Application will be closed because of the error:");
+                ui.label(RichText::new(error.as_ref()).color(Color32::RED));
+                if ui.button("Ok").clicked() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            })
+        });
+    }
 }
