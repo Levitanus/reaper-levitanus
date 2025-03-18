@@ -43,7 +43,7 @@ pub fn parse_all(
     sender: impl Into<Option<Sender<ParsingProgress>>>,
 ) -> Result<(), Box<dyn Error>> {
     let mut sender: Option<Sender<ParsingProgress>> = sender.into();
-    let mut progress = 0.01;
+    let mut progress = 0.0;
     if let Err(e) = parse_muxers(muxers_path(&out_dir), &mut progress, &mut sender) {
         send_progress(ParsingProgress::Result(Err(e.to_string())), &mut sender)?;
         return Err(e);
@@ -189,7 +189,7 @@ fn parse_muxers(
         };
         muxers.push(muxer);
     }
-    let muxers_string: String = serde_json::to_string(&muxers)?;
+    let muxers_string: String = serde_json::to_string_pretty(&muxers)?;
     info!(
         "\ndamping muxers to the file: {}\n",
         out_file.absolutize()?.display()
@@ -293,7 +293,7 @@ fn parse_encoders(
         };
         encoders.push(encoder);
     }
-    let encoders_string: String = serde_json::to_string(&encoders)?;
+    let encoders_string: String = serde_json::to_string_pretty(&encoders)?;
     info!(
         "\ndamping encoders to the file: {}\n",
         out_file.absolutize()?.display()
@@ -401,7 +401,7 @@ fn parse_filters(
         };
         filters.push(filter);
     }
-    let filters_string: String = serde_json::to_string(&filters)?;
+    let filters_string: String = serde_json::to_string_pretty(&filters)?;
     info!(
         "\ndamping filters_string to the file: {}\n",
         out_file.absolutize()?.display()
@@ -421,38 +421,18 @@ fn parse_pix_fmts(
     let pix_fmt_re = Regex::new(
         r"^(?<flags>[\w\.]{5})\s(?<name>\w+)\s+(?<nb_components>\d)\s+(?<bits_per_pixel>\d+)\s+(?<bit_depth>[\d-]+)",
     )?;
-    let info_end_re = Regex::new(r".*AVOptions:$")?;
 
     let mut pix_fmts = Vec::new();
     info!("collecting pixel format...");
     for mut line in lines {
         line = line.trim();
-        // debug!("line: {}", line);
         let Some(cap) = pix_fmt_re.captures(line) else {
             continue;
         };
-        // debug!("cap: {:#?}", cap);
         let name = cap["name"].to_string();
-        // let description = cap["description"].to_string();
-        // if [""]
-        //     .into_iter()
-        //     .find(|n| {
-        //         if name.contains(*n) {
-        //             return true;
-        //         }
-        //         false
-        //     })
-        //     .is_some()
-        // {
-        //     info!("skipping '{name}'");
-        //     continue;
-        // }
         info!("Parsing pixel format '{name}'");
         inc_progress(progress, sender)?;
 
-        // let info_string = output_with_args(["-h", &format!("pix_fmt={name}")])?;
-        // debug!("info string: {}", info_string);
-        // let mut info = Vec::new();
         let flags_string = cap["flags"].to_string();
         let mut flags = flags_string.chars();
         let input_support = match flags.next().ok_or("can not read a char")? {
@@ -492,7 +472,7 @@ fn parse_pix_fmts(
         };
         pix_fmts.push(filter);
     }
-    let filters_string: String = serde_json::to_string(&pix_fmts)?;
+    let filters_string: String = serde_json::to_string_pretty(&pix_fmts)?;
     info!(
         "\ndamping filters_string to the file: {}\n",
         out_file.absolutize()?.display()

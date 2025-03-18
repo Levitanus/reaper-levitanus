@@ -2,16 +2,16 @@ use std::{
     fs::File,
     io::BufReader,
     path::PathBuf,
-    process::{self, Child, Command},
+    process::{Child, Command},
     sync::{
-        mpsc::{self, Receiver},
+        mpsc::{self, channel, Receiver, Sender},
         Arc, Mutex,
     },
     thread::spawn,
     time::Duration,
 };
 
-use log::{debug, error};
+use log::debug;
 use rea_rs::{
     socket::{self, Broadcaster, SocketHandle},
     ControlSurface, ExtState, Reaper,
@@ -25,7 +25,7 @@ use super::{
 };
 use crate::LevitanusError;
 
-// mod small_widgets;
+mod small_widgets;
 
 pub static BACKEND_ID_STRING: &str = "LevitanusFfmpegGui";
 pub static SOCKET_ADDRESS: &str = "127.0.0.1:49332";
@@ -116,74 +116,6 @@ impl ControlSurface for Backend {
     }
 }
 
-#[derive(Debug)]
-struct Front {
-    state: State,
-    socket: SocketHandle<IppMessage>,
-    parsing_progress: ParsingProgress,
-    parsing_progress_f32: f32,
-    parser_channel: Option<Receiver<ParsingProgress>>,
-    muxers: Vec<Muxer>,
-}
-impl Front {
-    fn new(gui_state: State, socket: SocketHandle<IppMessage>) -> Self {
-        let parsing_progress = match check_parsed_paths(gui_state.json_path.clone()) {
-            true => ParsingProgress::Result(Ok(())),
-            false => ParsingProgress::Unparsed,
-        };
-        let muxers = Self::build_muxers_list(&gui_state.json_path, &parsing_progress)
-            .expect("can not build muxers list");
-        Self {
-            state: gui_state,
-            socket,
-            parsing_progress,
-            parsing_progress_f32: f32::default(),
-            parser_channel: None,
-            muxers,
-        }
-    }
-    fn parse(&mut self) {
-        let (tx, rx) = mpsc::channel::<ParsingProgress>();
-        self.parser_channel = Some(rx);
-        let path = self.state.json_path.clone();
-        spawn(move || {
-            parse_all(path, tx).expect("can not parse all");
-        });
-    }
-    fn build_muxers_list(
-        json_path: &PathBuf,
-        progress: &ParsingProgress,
-    ) -> anyhow::Result<Vec<Muxer>> {
-        match progress {
-            ParsingProgress::Result(Ok(_)) => {
-                let file = File::open(muxers_path(json_path))?;
-                let reader = BufReader::new(file);
-                Ok(serde_json::from_reader(reader)?)
-            }
-            _ => Ok(vec![Muxer::default()]),
-        }
-    }
-    fn poll_backend(&mut self) {
-        for msg in self.socket.try_iter() {
-            match msg {
-                IppMessage::Init => panic!("recieved init message during the loop."),
-                IppMessage::State(s) => self.state = s,
-                IppMessage::Mutate(msg) => self.state.update(msg),
-                IppMessage::Shutdown => process::exit(0),
-            }
-        }
-    }
-}
-impl eframe::App for Front {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        self.poll_backend();
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Hello World!");
-        });
-        ctx.request_repaint_after(Duration::from_millis(200));
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 enum StateMessage {
     VideoMuxer(String),
@@ -218,11 +150,105 @@ impl State {
     }
 }
 
+#[derive(Debug)]
 enum FrontMessage {
-    Frame,
-    Mutate(StateMessage),
-    Closed,
     Parse,
+    Exit,
+}
+
+#[derive(Debug)]
+struct Front {
+    state: State,
+    socket: SocketHandle<IppMessage>,
+    should_exit: bool,
+    msg_rx: Receiver<FrontMessage>,
+    msg_tx: Sender<FrontMessage>,
+    parsing_progress: ParsingProgress,
+    parser_channel: Option<Receiver<ParsingProgress>>,
+    muxers: Vec<Muxer>,
+}
+impl Front {
+    fn new(gui_state: State, socket: SocketHandle<IppMessage>) -> Self {
+        let parsing_progress = match check_parsed_paths(gui_state.json_path.clone()) {
+            true => ParsingProgress::Result(Ok(())),
+            false => ParsingProgress::Unparsed,
+        };
+        let muxers = Self::build_muxers_list(&gui_state.json_path, &parsing_progress)
+            .expect("can not build muxers list");
+
+        let (msg_tx, msg_rx) = channel();
+        Self {
+            state: gui_state,
+            socket,
+            should_exit: false,
+            msg_rx,
+            msg_tx,
+            parsing_progress,
+            parser_channel: None,
+            muxers,
+        }
+    }
+    fn parse(&mut self) {
+        let (tx, rx) = mpsc::channel::<ParsingProgress>();
+        self.parser_channel = Some(rx);
+        self.parsing_progress = ParsingProgress::Progress(0.0);
+        let path = self.state.json_path.clone();
+        spawn(move || {
+            parse_all(path, tx).expect("can not parse all");
+        });
+    }
+    fn build_muxers_list(
+        json_path: &PathBuf,
+        progress: &ParsingProgress,
+    ) -> anyhow::Result<Vec<Muxer>> {
+        match progress {
+            ParsingProgress::Result(Ok(_)) => {
+                let file = File::open(muxers_path(json_path))?;
+                let reader = BufReader::new(file);
+                Ok(serde_json::from_reader(reader)?)
+            }
+            _ => Ok(vec![Muxer::default()]),
+        }
+    }
+    fn poll_messages(&mut self) {
+        for msg in self.msg_rx.try_iter().collect::<Vec<FrontMessage>>() {
+            match msg {
+                FrontMessage::Parse => self.parse(),
+                FrontMessage::Exit => self.should_exit = true,
+            }
+        }
+        if let Some(rx) = &self.parser_channel {
+            for prg in rx.try_iter() {
+                self.parsing_progress = prg;
+            }
+        }
+        for msg in self.socket.try_iter() {
+            match msg {
+                IppMessage::Init => panic!("recieved init message during the loop."),
+                IppMessage::State(s) => self.state = s,
+                IppMessage::Mutate(msg) => self.state.update(msg),
+                IppMessage::Shutdown => self.should_exit = true,
+            }
+        }
+    }
+    fn emit(&self, message: FrontMessage) {
+        self.msg_tx
+            .send(message)
+            .expect("front message channel is corrupted");
+    }
+}
+impl eframe::App for Front {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.poll_messages();
+        if self.should_exit {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        egui::TopBottomPanel::bottom("footer").show(ctx, |ui| self.widget_parser(ctx, ui));
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("Hello World!");
+        });
+        ctx.request_repaint_after(Duration::from_millis(200));
+    }
 }
 
 pub fn front() -> anyhow::Result<()> {
@@ -241,7 +267,7 @@ pub fn front() -> anyhow::Result<()> {
     };
     let app = Front::new(state, socket);
     match eframe::run_native(
-        "My egui App",
+        "Levitanus FFMPEG render",
         native_options,
         Box::new(|cc| Ok(Box::new(app))),
     ) {

@@ -1,6 +1,10 @@
 use std::io::{self, Write};
 use std::{error::Error, path::PathBuf, process::Command, time::Duration};
 
+use super::filters::{Filter, ScaleAspectRationOption};
+use super::nodes::{Node, NodeContent, Pin};
+use super::options::{Encoder, Muxer, PixelFormat};
+
 use fraction::Fraction;
 use itertools::Itertools;
 use rea_rs::{
@@ -8,10 +12,6 @@ use rea_rs::{
     Position, Project, Reaper, SourceOffset,
 };
 use serde::{Deserialize, Serialize};
-
-use super::filters::{Filter, ScaleAspectRationOption};
-use super::nodes::{Node, NodeContent, Pin};
-use super::options::{Encoder, Muxer, PixelFormat};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RenderSettings {
