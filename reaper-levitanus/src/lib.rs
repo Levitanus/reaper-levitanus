@@ -14,4 +14,6 @@ pub enum LevitanusError {
     ConnectionError(String),
     #[error("Posion error: {0}")]
     Poison(String),
+    #[error("EnumError: can not set value '{0}' to enum")]
+    Enum(String),
 }

@@ -166,8 +166,6 @@ enum ExitCode {
 enum FrontMessage {
     Parse,
     Exit,
-    Muxer(String),
-    MuxerOptions(Vec<Opt>),
     Error(String),
 }
 
@@ -238,14 +236,6 @@ impl Front {
             match msg {
                 FrontMessage::Parse => self.parse(),
                 FrontMessage::Exit => self.exit_code = Some(ExitCode::Shutdown),
-                FrontMessage::Muxer(mux_name) => {
-                    if let Some(muxer) = self.muxers.iter().find(|mux| mux.name == mux_name) {
-                        self.mutate(StateMessage::Muxer(muxer.clone()))?;
-                    }
-                }
-                FrontMessage::MuxerOptions(opts) => {
-                    self.mutate(StateMessage::MuxerOptions(opts))?
-                }
                 FrontMessage::Error(e) => return Err(Error::msg(e)),
             }
         }

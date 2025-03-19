@@ -1,11 +1,8 @@
-use egui::{
-    CollapsingHeader, ComboBox, Context, DragValue, Grid, Layout, RichText, ScrollArea, Ui,
-};
-use itertools::Itertools;
+use egui::{CollapsingHeader, ComboBox, Context, DragValue, Grid, RichText, ScrollArea, Ui};
 
-use crate::ffmpeg::options::{Opt, OptionParameter};
+use crate::ffmpeg::options::{FfmpegColor, Opt, OptionParameter};
 
-use super::{Front, FrontMessage};
+use super::Front;
 
 impl Front {
     pub(crate) fn widget_render_settings(&mut self, ctx: &Context, ui: &mut Ui) {
@@ -54,7 +51,7 @@ impl Front {
             .min_scrolled_height(100.0)
             .show(ui, |ui| {
                 // ui.set_max_width(ui.available_width() - 30.0);
-                Grid::new(id + "options")
+                Grid::new(id.clone() + "options")
                     .min_col_width(50.0)
                     .max_col_width(400.0)
                     .num_columns(3)
@@ -112,7 +109,190 @@ impl Front {
                                         }
                                     }
                                 },
-                                _ => {
+                                OptionParameter::String(v)
+                                | OptionParameter::Binary(v)
+                                | OptionParameter::Dictionary(v)
+                                | OptionParameter::ImageSize(v)
+                                | OptionParameter::Rational(v) => match v.clone() {
+                                    Some(mut val) => {
+                                        ui.vertical(|ui| {
+                                            if ui.text_edit_singleline(&mut val).changed() {
+                                                opt.parameter = opt
+                                                    .parameter
+                                                    .with_new_string_value(val)
+                                                    .expect("can not set string as value");
+                                            };
+                                            if ui.button("clear parameter").clicked() {
+                                                opt.parameter = opt.parameter.with_none();
+                                            }
+                                        });
+                                    }
+                                    None => {
+                                        if ui.button("use parameter").clicked() {
+                                            opt.parameter = opt
+                                                .parameter
+                                                .with_new_string_value("".to_string())
+                                                .expect("can not set string as value");
+                                        }
+                                    }
+                                },
+                                OptionParameter::Float(v) => match v {
+                                    Some(mut val) => {
+                                        ui.vertical(|ui| {
+                                            if ui.add(DragValue::new(&mut val)).changed() {
+                                                opt.parameter = OptionParameter::Float(Some(val));
+                                            };
+                                            if ui.button("clear parameter").clicked() {
+                                                opt.parameter = OptionParameter::Float(None);
+                                            }
+                                        });
+                                    }
+                                    None => {
+                                        if ui.button("use parameter").clicked() {
+                                            opt.parameter =
+                                                OptionParameter::Float(Some(f64::default()));
+                                        }
+                                    }
+                                },
+                                OptionParameter::Color(v) => match v.clone() {
+                                    Some(val) => {
+                                        ui.vertical(|ui| {
+                                            let mut color = val.into();
+                                            if ui.color_edit_button_srgba(&mut color).changed() {
+                                                opt.parameter = OptionParameter::Color(Some(
+                                                    FfmpegColor::from(color),
+                                                ))
+                                            }
+                                            ui.menu_button("built-in", |ui| {
+                                                ScrollArea::vertical().show(ui, |ui| {
+                                                    for (name, value) in
+                                                        FfmpegColor::built_in_colors()
+                                                    {
+                                                        if ui.button(name).clicked() {
+                                                            opt.parameter = OptionParameter::Color(
+                                                                Some(FfmpegColor::new(value, 0xff)),
+                                                            );
+                                                            ui.close_menu();
+                                                        }
+                                                    }
+                                                });
+                                            });
+                                            if ui.button("clear parameter").clicked() {
+                                                opt.parameter = OptionParameter::Color(None);
+                                            }
+                                        });
+                                    }
+                                    None => {
+                                        if ui.button("use parameter").clicked() {
+                                            opt.parameter = OptionParameter::Color(Some(
+                                                FfmpegColor::default(),
+                                            ));
+                                        }
+                                    }
+                                },
+                                OptionParameter::FrameRate(v) => match v.clone() {
+                                    Some(mut val) => {
+                                        ui.vertical(|ui| {
+                                            if ui.text_edit_singleline(&mut val).changed() {
+                                                opt.parameter = opt
+                                                    .parameter
+                                                    .with_new_string_value(val)
+                                                    .expect("can not set string as value");
+                                            };
+                                            ui.menu_button("built-in", |ui| {
+                                                ScrollArea::vertical().show(ui, |ui| {
+                                                    for (name, hint) in [
+                                                        ("ntsc", "30000 / 1001"),
+                                                        ("pal", "25"),
+                                                        ("qntsc", "30000 / 1001"),
+                                                        ("qpal", "25"),
+                                                        ("sntsc", "30000 / 1001"),
+                                                        ("spal", "25"),
+                                                        ("film", "24"),
+                                                        ("ntsc-film", "24000 / 1001"),
+                                                    ] {
+                                                        if ui
+                                                            .button(name)
+                                                            .on_hover_ui(|ui| {
+                                                                ui.label(hint);
+                                                            })
+                                                            .clicked()
+                                                        {
+                                                            opt.parameter =
+                                                                OptionParameter::FrameRate(Some(
+                                                                    name.to_string(),
+                                                                ));
+                                                            ui.close_menu();
+                                                        }
+                                                    }
+                                                });
+                                            });
+                                            if ui.button("clear parameter").clicked() {
+                                                opt.parameter = opt.parameter.with_none();
+                                            }
+                                        });
+                                    }
+                                    None => {
+                                        if ui.button("use parameter").clicked() {
+                                            opt.parameter = opt
+                                                .parameter
+                                                .with_new_string_value("".to_string())
+                                                .expect("can not set string as value");
+                                        }
+                                    }
+                                },
+                                OptionParameter::Duration(_) => {
+                                    ui.label("TODO");
+                                }
+                                OptionParameter::Enum {
+                                    items,
+                                    selected_idx,
+                                } => match selected_idx {
+                                    Some(mut val) => {
+                                        let text = items[val as usize].clone();
+                                        let id_salt = id.clone() + &opt.name.clone();
+                                        let cloned_items = items.clone();
+                                        ui.vertical(|ui| {
+                                            ComboBox::from_id_salt(id_salt)
+                                                .selected_text(text)
+                                                .show_ui(ui, |ui| {
+                                                    for (idx, item) in
+                                                        cloned_items.iter().enumerate()
+                                                    {
+                                                        if ui
+                                                            .selectable_value(&mut val, idx, item)
+                                                            .clicked()
+                                                        {
+                                                            opt.parameter = OptionParameter::Enum {
+                                                                items: cloned_items.clone(),
+                                                                selected_idx: Some(idx),
+                                                            }
+                                                        }
+                                                    }
+                                                });
+                                            if ui.button("clear parameter").clicked() {
+                                                opt.parameter = OptionParameter::Enum {
+                                                    items: cloned_items,
+                                                    selected_idx: None,
+                                                };
+                                            }
+                                            if ui.button("enter raw string").clicked() {
+                                                opt.parameter = OptionParameter::String(Some(
+                                                    String::default(),
+                                                ));
+                                            }
+                                        });
+                                    }
+                                    None => {
+                                        if ui.button("use parameter").clicked() {
+                                            opt.parameter = OptionParameter::Enum {
+                                                items: items.clone(),
+                                                selected_idx: Some(usize::default()),
+                                            };
+                                        }
+                                    }
+                                },
+                                OptionParameter::Flags { items, selected } => {
                                     ui.label("TODO");
                                 }
                             };

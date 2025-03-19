@@ -500,7 +500,10 @@ fn parse_option(line: &str, mut options: &mut Vec<Opt>) -> Result<ParseFlow, Box
         "color" => OptionParameter::Color(None),
         "image_size" => OptionParameter::ImageSize(None),
         "video_rate" => OptionParameter::FrameRate(None),
-        "flags" => OptionParameter::Flags(HashMap::new()),
+        "flags" => OptionParameter::Flags {
+            items: Vec::new(),
+            selected: None,
+        },
         t => return Err(format!("unknown type: {t}. The line was: {line}").into()),
     };
     let default = if let Some(cap) = OPT_RE_DEFAULT.find(line) {
@@ -524,7 +527,7 @@ fn parse_enum(line: &str, options: &mut Vec<Opt>) -> Result<ParseFlow, Box<dyn E
     if OPT_RE.captures(line).is_some() {
         return Ok(ParseFlow::Opt);
     }
-    let description = match OPT_ENUM_RE_DESC.find(line) {
+    let _description = match OPT_ENUM_RE_DESC.find(line) {
         Some(d) => d.as_str().to_string(),
         None => "".to_string(),
     };
@@ -532,21 +535,30 @@ fn parse_enum(line: &str, options: &mut Vec<Opt>) -> Result<ParseFlow, Box<dyn E
         .last_mut()
         .ok_or(format!("options are empty, line is {line}"))?;
     let new_par = match &mut last.parameter {
-        OptionParameter::Flags(hm) => {
-            hm.insert(cap["name"].to_string(), description);
+        OptionParameter::Flags { items, selected: _ } => {
+            items.push(cap["name"].to_string());
             None
         }
-        OptionParameter::Enum(hm) => {
-            hm.insert(cap["name"].to_string(), description);
+        OptionParameter::Enum {
+            items,
+            selected_idx: _,
+        } => {
+            items.push(cap["name"].to_string());
             None
         }
         OptionParameter::Int(_) => {
-            let map = HashMap::from_iter([(cap["name"].to_string(), description)]);
-            Some(OptionParameter::Enum(map))
+            let vec = vec![cap["name"].to_string()];
+            Some(OptionParameter::Enum {
+                items: vec,
+                selected_idx: None,
+            })
         }
         OptionParameter::String(_) => {
-            let map = HashMap::from_iter([(cap["name"].to_string(), description)]);
-            Some(OptionParameter::Enum(map))
+            let vec = vec![cap["name"].to_string()];
+            Some(OptionParameter::Enum {
+                items: vec,
+                selected_idx: None,
+            })
         }
         OptionParameter::Bool(_) => None,
         p => {
