@@ -256,7 +256,7 @@ fn parse_encoders(
             'D' => true,
             _ => false,
         };
-        let mut pixel_formats = None;
+        let mut pixel_formats: Option<Vec<String>> = None;
 
         let mut options: Vec<Opt> = Vec::new();
         let mut parse_flow = ParseFlow::Info;
@@ -278,11 +278,16 @@ fn parse_encoders(
                 ParseFlow::Enum => parse_flow = parse_enum(i_line, &mut options)?,
             }
         }
+        let pixel_format = match &pixel_formats {
+            Some(fmts) => Some(fmts[0].clone()),
+            None => None,
+        };
         let encoder = Encoder {
             name,
             description,
             info: info.join("\n"),
-            pixel_formats,
+            supported_pixel_formats: pixel_formats,
+            pixel_format,
             encoder_type,
             frame_level_multithreading,
             slice_level_multithreading,

@@ -7,15 +7,15 @@ members = [
 ]
 
 [workspace.dependencies]
-rea-rs = {git = "https://github.com/Levitanus/rea-rs"}
-rea-rs-low = {git = "https://github.com/Levitanus/rea-rs"}
-rea-rs-macros = {git = "https://github.com/Levitanus/rea-rs"}
-rea-rs-test = {git = "https://github.com/Levitanus/rea-rs"}
+# rea-rs = {git = "https://github.com/Levitanus/rea-rs"}
+# rea-rs-low = {git = "https://github.com/Levitanus/rea-rs"}
+# rea-rs-macros = {git = "https://github.com/Levitanus/rea-rs"}
+# rea-rs-test = {git = "https://github.com/Levitanus/rea-rs"}
 
-# rea-rs = {path = "../rea-rs/rea-rs"}
-# rea-rs-low = {path = "../rea-rs/low"}
-# rea-rs-macros = {path = "../rea-rs/macros"}
-# rea-rs-test = {path = "../rea-rs/rea-rs-test"}
+rea-rs = {path = "../rea-rs/rea-rs"}
+rea-rs-low = {path = "../rea-rs/low"}
+rea-rs-macros = {path = "../rea-rs/macros"}
+rea-rs-test = {path = "../rea-rs/rea-rs-test"}
 
 derivative = "2.2"
 env_logger = "0.10"

@@ -13,16 +13,16 @@ use std::{
 
 use anyhow::Error;
 use egui::style::ScrollStyle;
-use log::debug;
+use log::{debug, error};
 use rea_rs::{
     socket::{self, Broadcaster, SocketHandle},
-    ControlSurface, ExtState, Reaper,
+    ControlSurface, ExtState, Project, Reaper,
 };
 use serde::{Deserialize, Serialize};
 
 use super::{
-    options::{Muxer, Opt},
-    parser::{check_parsed_paths, muxers_path, parse_all, ParsingProgress},
+    options::{Encoder, Muxer, Opt},
+    parser::{check_parsed_paths, encoders_path, muxers_path, parse_all, ParsingProgress},
     RenderSettings,
 };
 use crate::LevitanusError;
@@ -30,9 +30,9 @@ use crate::LevitanusError;
 mod render_settings;
 mod small_widgets;
 
+static PERSIST: bool = false;
 pub static BACKEND_ID_STRING: &str = "LevitanusFfmpegGui";
 pub static SOCKET_ADDRESS: &str = "127.0.0.1:49332";
-static PERSIST: bool = false;
 pub static EXT_SECTION: &str = "Levitanus";
 pub static EXT_STATE_KEY: &str = "FFMPEG_FrontState";
 
@@ -40,7 +40,6 @@ pub static EXT_STATE_KEY: &str = "FFMPEG_FrontState";
 enum IppMessage {
     Init,
     State(State),
-    Mutate(StateMessage),
     Shutdown,
 }
 
@@ -54,15 +53,15 @@ impl Backend {
     pub fn new() -> anyhow::Result<Backend> {
         let front =
             Command::new("/home/levitanus/gits/reaper-levitanus/target/debug/front").spawn()?;
-        let rpr = Reaper::get_mut();
         let (sockets, broadcaster) = rea_rs::socket::spawn_server(SOCKET_ADDRESS);
-        let pr = rpr.current_project();
-        rea_rs::ExtState::new(EXT_SECTION, EXT_STATE_KEY, State::default(), PERSIST, &pr);
         Ok(Backend {
             front,
             sockets,
             broadcaster,
         })
+    }
+    fn ext_state(pr: &Project) -> ExtState<State, Project> {
+        ExtState::new(EXT_SECTION, EXT_STATE_KEY, None, PERSIST, pr, 10000)
     }
 }
 impl Drop for Backend {
@@ -79,32 +78,23 @@ impl ControlSurface for Backend {
             Err(e) => return Err(LevitanusError::Poison(e.to_string()).into()),
         };
 
-        // let status = self.front.try_wait();
-        // if clients.len() > 0 && status.is_err() || status.ok().is_some() {
-        //     drop(clients);
-        //     self.stop();
-        //     return Ok(());
-        // }
-
         let rpr = Reaper::get();
         let pr = rpr.current_project();
-        let mut ext_state = ExtState::new(EXT_SECTION, EXT_STATE_KEY, None, PERSIST, &pr);
-        let mut state = ext_state.get().unwrap_or(State::default());
 
         let mut shutdown = false;
 
         for client in clients.iter_mut() {
             for message in client.try_iter() {
-                debug!("server recieved a message: {:?}", message);
+                debug!("server recieved a message: {:#?}", message);
                 match message {
-                    IppMessage::Init => client.send(IppMessage::State(state.clone()))?,
-                    IppMessage::State(state) => ext_state.set(state),
-                    IppMessage::Mutate(msg) => state.update(msg)?,
+                    IppMessage::Init => client.send(IppMessage::State(
+                        Self::ext_state(&pr).get().unwrap_or(State::default()),
+                    ))?,
+                    IppMessage::State(msg) => Self::ext_state(&pr).set(msg),
                     IppMessage::Shutdown => shutdown = true,
                 }
             }
         }
-        ext_state.set(state);
         if shutdown {
             drop(clients);
             self.stop();
@@ -115,7 +105,7 @@ impl ControlSurface for Backend {
         BACKEND_ID_STRING.to_string()
     }
     fn get_desc_string(&self) -> String {
-        "ffmpeg back-end front-end subprocess, that communicates with front-end".to_string()
+        "ffmpeg back-end subprocess, that communicates with front-end".to_string()
     }
 }
 
@@ -179,6 +169,7 @@ struct Front {
     parsing_progress: ParsingProgress,
     parser_channel: Option<Receiver<ParsingProgress>>,
     muxers: Vec<Muxer>,
+    encoders: Vec<Encoder>,
 }
 impl Front {
     fn new(gui_state: State, socket: SocketHandle<IppMessage>) -> Self {
@@ -191,6 +182,8 @@ impl Front {
             .into_iter()
             .filter(|mux| mux.video_codec.is_some())
             .collect();
+        let encoders = Self::build_encoders_list(&gui_state.json_path, &parsing_progress)
+            .expect("can not build encoders list");
 
         let (msg_tx, msg_rx) = channel();
         Self {
@@ -202,6 +195,7 @@ impl Front {
             parsing_progress,
             parser_channel: None,
             muxers,
+            encoders,
         }
     }
     fn parse(&mut self) {
@@ -223,13 +217,21 @@ impl Front {
                 let reader = BufReader::new(file);
                 Ok(serde_json::from_reader(reader)?)
             }
-            _ => Ok(vec![Muxer::default()]),
+            _ => Ok(Vec::new()),
         }
     }
-    fn mutate(&mut self, message: StateMessage) -> anyhow::Result<()> {
-        self.state.update(message.clone())?;
-        self.socket.send(IppMessage::Mutate(message))?;
-        Ok(())
+    fn build_encoders_list(
+        json_path: &PathBuf,
+        progress: &ParsingProgress,
+    ) -> anyhow::Result<Vec<Encoder>> {
+        match progress {
+            ParsingProgress::Result(Ok(_)) => {
+                let file = File::open(encoders_path(json_path))?;
+                let reader = BufReader::new(file);
+                Ok(serde_json::from_reader(reader)?)
+            }
+            _ => Ok(Vec::new()),
+        }
     }
     fn poll_messages(&mut self) -> anyhow::Result<()> {
         for msg in self.msg_rx.try_iter().collect::<Vec<FrontMessage>>() {
@@ -242,13 +244,18 @@ impl Front {
         if let Some(rx) = &self.parser_channel {
             for prg in rx.try_iter() {
                 self.parsing_progress = prg;
+                if let ParsingProgress::Result(Ok(_)) = self.parsing_progress {
+                    self.muxers =
+                        Self::build_muxers_list(&self.state.json_path, &self.parsing_progress)?;
+                    self.encoders =
+                        Self::build_encoders_list(&self.state.json_path, &self.parsing_progress)?;
+                }
             }
         }
         for msg in self.socket.try_iter() {
             match msg {
                 IppMessage::Init => panic!("recieved init message during the loop."),
                 IppMessage::State(s) => self.state = s,
-                IppMessage::Mutate(msg) => self.state.update(msg)?,
                 IppMessage::Shutdown => self.exit_code = Some(ExitCode::Shutdown),
             }
         }
@@ -280,6 +287,17 @@ impl eframe::App for Front {
         });
         ctx.request_repaint_after(Duration::from_millis(200));
     }
+    fn save(&mut self, _storage: &mut dyn eframe::Storage) {
+        debug!("on save ()");
+        match self.socket.send(IppMessage::State(self.state.clone())) {
+            Ok(()) => (),
+            Err(e) => {
+                let msg = format!("Can not save state in reaper.\nThe error is: {}", e);
+                error!("{}", msg);
+                self.exit_code = Some(ExitCode::Error(msg))
+            }
+        }
+    }
 }
 
 pub fn front() -> anyhow::Result<()> {
@@ -296,6 +314,7 @@ pub fn front() -> anyhow::Result<()> {
             .into())
         }
     };
+    debug!("state is: {:#?}", state);
     let app = Front::new(state, socket);
     match eframe::run_native(
         "Levitanus FFMPEG render",

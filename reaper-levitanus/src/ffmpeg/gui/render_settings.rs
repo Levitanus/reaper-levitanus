@@ -1,8 +1,7 @@
 use egui::{CollapsingHeader, ComboBox, Context, DragValue, Grid, RichText, ScrollArea, Ui};
 
-use crate::ffmpeg::options::{FfmpegColor, Opt, OptionParameter};
-
 use super::Front;
+use crate::ffmpeg::options::{DurationUnit, FfmpegColor, Opt, OptionParameter};
 
 impl Front {
     pub(crate) fn widget_render_settings(&mut self, ctx: &Context, ui: &mut Ui) {
@@ -12,6 +11,7 @@ impl Front {
                 ui.horizontal(|ui| {
                     let current_muxer = &mut self.state.render_settings.muxer;
                     ui.vertical(|ui| {
+                        ui.set_max_width(120.0);
                         ui.label(RichText::new("muxer:").strong());
                         ComboBox::from_id_salt("muxer")
                             .selected_text(current_muxer.name.clone())
@@ -241,9 +241,124 @@ impl Front {
                                         }
                                     }
                                 },
-                                OptionParameter::Duration(_) => {
-                                    ui.label("TODO");
-                                }
+                                OptionParameter::Duration(v) => match v {
+                                    Some(val) => {
+                                        let val = val.clone();
+                                        ui.vertical(|ui| {
+                                            let units = match val {
+                                                DurationUnit::Seconds(mut s) => {
+                                                    if ui.add(DragValue::new(&mut s)).changed(){
+                                                        opt.parameter = OptionParameter::Duration(Some(DurationUnit::Seconds(s)));
+                                                    };
+                                                    "seconds (s)"
+                                                }
+                                                DurationUnit::Milliseconds(mut ms) => {
+                                                    if ui.add(DragValue::new(&mut ms)).changed(){
+                                                        opt.parameter = OptionParameter::Duration(Some(DurationUnit::Milliseconds(ms)));
+                                                    };
+                                                    "milliseconds (ms)"
+                                                }
+                                                DurationUnit::Microseconds(mut us) => {
+                                                    if ui.add(DragValue::new(&mut us)).changed(){
+                                                        opt.parameter = OptionParameter::Duration(Some(DurationUnit::Microseconds(us)));
+                                                    };
+                                                    "microseconds (us)"
+                                                }
+                                                DurationUnit::Timestamp {
+                                                    mut hours,
+                                                    mut minutes,
+                                                    mut seconds,
+                                                } => {
+                                                    ui.horizontal(|ui| {
+                                                        let mut changed = false;
+                                                        if ui
+                                                            .add(DragValue::new(&mut hours)).on_hover_text("hours")
+                                                            .changed()
+                                                        {
+                                                            changed = true
+                                                        };
+                                                        if ui
+                                                            .add(DragValue::new(&mut minutes)).on_hover_text("minutes")
+                                                            .changed()
+                                                        {
+                                                            changed = true
+                                                        };
+                                                        if ui
+                                                            .add(DragValue::new(&mut seconds)).on_hover_text("seconds")
+                                                            .changed()
+                                                        {
+                                                            changed = true
+                                                        };
+                                                        if changed {
+                                                            opt.parameter =
+                                                                OptionParameter::Duration(Some(
+                                                                   DurationUnit::Timestamp { hours, minutes, seconds },
+                                                                ));
+                                                        }
+                                                    });
+                                                    "timestamp (HH:MM:SS.mmm)"
+                                                }
+                                            };
+                                            ComboBox::from_id_salt("duration")
+                                                .selected_text(units)
+                                                .show_ui(ui, |ui| {
+                                                    if ui
+                                                        .selectable_label(
+                                                            "seconds (s)" == units,
+                                                            "seconds (s)",
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        opt.parameter = OptionParameter::Duration(
+                                                            Some(val.as_seconds()),
+                                                        );
+                                                    }
+                                                    if ui
+                                                        .selectable_label(
+                                                            "milliseconds (ms)" == units,
+                                                            "milliseconds (ms)",
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        opt.parameter = OptionParameter::Duration(
+                                                            Some(val.as_milliseconds()),
+                                                        );
+                                                    }
+                                                    if ui
+                                                        .selectable_label(
+                                                            "microseconds (us)" == units,
+                                                            "microseconds (us)",
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        opt.parameter = OptionParameter::Duration(
+                                                            Some(val.as_microseconds()),
+                                                        );
+                                                    }
+                                                    if ui
+                                                        .selectable_label(
+                                                            "timestamp (HH:MM:SS.mmm)" == units,
+                                                            "timestamp (HH:MM:SS.mmm)",
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        opt.parameter = OptionParameter::Duration(
+                                                            Some(val.as_timestamp()),
+                                                        );
+                                                    }
+                                                });
+                                            if ui.button("clear parameter").clicked() {
+                                                opt.parameter = OptionParameter::Duration(None);
+                                            }
+                                        });
+                                    }
+                                    None => {
+                                        if ui.button("use parameter").clicked() {
+                                            opt.parameter =
+                                                OptionParameter::Duration(Some(DurationUnit::Seconds(0.0)));
+                                        }
+                                    }
+                                },
                                 OptionParameter::Enum {
                                     items,
                                     selected_idx,
@@ -293,7 +408,50 @@ impl Front {
                                     }
                                 },
                                 OptionParameter::Flags { items, selected } => {
-                                    ui.label("TODO");
+                                    match selected.as_ref() {
+                                        Some(vector) => {
+                                            let cloned_items = items.clone();
+                                            let mut cloned_vector = vector.clone();
+                                            ui.vertical(|ui| {
+                                                let mut changed = false;
+                                                for (item, val) in cloned_items
+                                                    .iter()
+                                                    .zip(cloned_vector.iter_mut())
+                                                {
+                                                    if ui.checkbox(val, item).changed() {
+                                                        changed = true;
+                                                    }
+                                                }
+                                                if changed {
+                                                    opt.parameter = OptionParameter::Flags {
+                                                        items: cloned_items,
+                                                        selected: Some(cloned_vector),
+                                                    };
+                                                    return;
+                                                }
+                                                if ui.button("clear parameter").clicked() {
+                                                    opt.parameter = OptionParameter::Flags {
+                                                        items: cloned_items,
+                                                        selected: None,
+                                                    };
+                                                    return;
+                                                }
+                                                if ui.button("enter raw string").clicked() {
+                                                    opt.parameter = OptionParameter::String(Some(
+                                                        String::default(),
+                                                    ));
+                                                }
+                                            });
+                                        }
+                                        None => {
+                                            if ui.button("use parameter").clicked() {
+                                                opt.parameter = OptionParameter::Flags {
+                                                    items: items.clone(),
+                                                    selected: Some(vec![false; items.len()]),
+                                                };
+                                            }
+                                        }
+                                    }
                                 }
                             };
                             ui.end_row();

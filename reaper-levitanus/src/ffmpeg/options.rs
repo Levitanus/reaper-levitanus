@@ -1,4 +1,4 @@
-use std::{collections::HashMap, num::ParseIntError};
+use std::{collections::HashMap, num::ParseIntError, time::Duration};
 
 use egui::Color32;
 use serde::{Deserialize, Serialize};
@@ -23,7 +23,8 @@ pub struct Encoder {
     pub name: String,
     pub description: String,
     pub info: String,
-    pub pixel_formats: Option<Vec<String>>,
+    pub supported_pixel_formats: Option<Vec<String>>,
+    pub pixel_format: Option<String>,
     pub encoder_type: EncoderType,
     pub frame_level_multithreading: bool,
     pub slice_level_multithreading: bool,
@@ -68,7 +69,7 @@ pub enum OptionParameter {
     Bool(Option<bool>),
     Binary(Option<String>),
     Rational(Option<String>),
-    Duration(Option<String>),
+    Duration(Option<DurationUnit>),
     Dictionary(Option<String>),
     Color(Option<FfmpegColor>),
     ImageSize(Option<String>),
@@ -114,7 +115,6 @@ impl OptionParameter {
             Self::String(_) => Ok(Self::String(Some(val))),
             Self::Binary(_) => Ok(Self::Binary(Some(val))),
             Self::Rational(_) => Ok(Self::Rational(Some(val))),
-            Self::Duration(_) => Ok(Self::Duration(Some(val))),
             Self::Dictionary(_) => Ok(Self::Dictionary(Some(val))),
             Self::ImageSize(_) => Ok(Self::ImageSize(Some(val))),
             Self::FrameRate(_) => Ok(Self::FrameRate(Some(val))),
@@ -150,100 +150,13 @@ impl Default for Muxer {
           "subtitle_codec": "ass",
           "options": [
             {
-              "name": "reserve_index_space",
-              "description": "reserve a given amount of space (in bytes) at the beginning of the file for the index (cues) (from 0 to INT_MAX) (default 0)",
-              "parameter": {
-                "Int": null
-              },
-              "default": "(default 0)"
+                "name": "d",
+                "description": "set minimum duration in seconds (default 2)",
+                "parameter": {
+                  "Duration": null
+                },
+                "default": "(default 2)"
             },
-            {
-              "name": "cues_to_front",
-              "description": "move Cues (the index) to the front by shifting data if necessary (default false)",
-              "parameter": {
-                "Bool": null
-              },
-              "default": "(default false)"
-            },
-            {
-              "name": "cluster_size_limit",
-              "description": "store at most the provided amount of bytes in a cluster (from -1 to INT_MAX) (default -1)",
-              "parameter": {
-                "Int": null
-              },
-              "default": "(default -1)"
-            },
-            {
-              "name": "cluster_time_limit",
-              "description": "store at most the provided number of milliseconds in a cluster (from -1 to I64_MAX) (default -1)",
-              "parameter": {
-                "Int": null
-              },
-              "default": "(default -1)"
-            },
-            {
-              "name": "dash",
-              "description": "create a WebM file conforming to WebM DASH specification (default false)",
-              "parameter": {
-                "Bool": null
-              },
-              "default": "(default false)"
-            },
-            {
-              "name": "dash_track_number",
-              "description": "track number for the DASH stream (from 1 to INT_MAX) (default 1)",
-              "parameter": {
-                "Int": null
-              },
-              "default": "(default 1)"
-            },
-            {
-              "name": "live",
-              "description": "write files assuming it is a live stream (default false)",
-              "parameter": {
-                "Bool": null
-              },
-              "default": "(default false)"
-            },
-            {
-              "name": "allow_raw_vfw",
-              "description": "allow raw VFW mode (default false)",
-              "parameter": {
-                "Bool": null
-              },
-              "default": "(default false)"
-            },
-            {
-              "name": "flipped_raw_rgb",
-              "description": "store raw RGB bitmaps in VFW mode in bottom-up mode (default false)",
-              "parameter": {
-                "Bool": null
-              },
-              "default": "(default false)"
-            },
-            {
-              "name": "write_crc32",
-              "description": "write a CRC32 element inside every Level 1 element (default true)",
-              "parameter": {
-                "Bool": null
-              },
-              "default": "(default true)"
-            },
-            {
-              "name": "default_mode",
-              "description": "control how a track's FlagDefault is inferred (from 0 to 2) (default passthrough)",
-              "parameter": {
-                "Enum": {
-                  "items": [
-                    "infer",
-                    "infer_no_subs",
-                    "passthrough"
-                  ],
-                  "selected_idx": null
-                }
-              },
-              "default": "(default passthrough)"
-            }
           ]
         });
         serde_json::from_value(json).expect("can not deserealize MKV muxer in default")
@@ -299,6 +212,56 @@ impl Default for PixelFormat {
             "bit_depth": "8-8-8"
         }"#;
         serde_json::from_str(json).expect("can not deserealize default yuv420p pixel format")
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub enum DurationUnit {
+    Seconds(f64),
+    Milliseconds(i32),
+    Microseconds(i32),
+    Timestamp {
+        hours: u32,
+        minutes: u32,
+        seconds: f64,
+    },
+}
+impl DurationUnit {
+    pub fn as_duration(&self) -> Duration {
+        match self {
+            Self::Seconds(s) => Duration::from_secs_f64(*s),
+            Self::Milliseconds(ms) => Duration::from_millis((*ms) as u64),
+            Self::Microseconds(us) => Duration::from_micros(*us as u64),
+            Self::Timestamp {
+                hours,
+                minutes,
+                seconds,
+            } => {
+                Duration::from_secs((*hours as u64) * 3600 + (*minutes as u64) * 60)
+                    + Duration::from_secs_f64(*seconds)
+            }
+        }
+    }
+    pub fn as_seconds(&self) -> Self {
+        Self::Seconds(self.as_duration().as_secs_f64())
+    }
+    pub fn as_milliseconds(&self) -> Self {
+        Self::Milliseconds(self.as_duration().as_millis() as i32)
+    }
+    pub fn as_microseconds(&self) -> Self {
+        Self::Microseconds(self.as_duration().as_micros() as i32)
+    }
+    pub fn as_timestamp(&self) -> Self {
+        let dur = self.as_duration();
+        let secs = dur.as_secs();
+        let hours = secs / 3600;
+        let minutes = secs % 3600 / 60;
+        let seconds = (secs % 60) as f64 + ((dur.subsec_micros() as f64) / 1000000.0);
+        Self::Timestamp {
+            hours: hours as u32,
+            minutes: minutes as u32,
+            seconds,
+        }
     }
 }
 
