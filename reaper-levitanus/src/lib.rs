@@ -16,4 +16,6 @@ pub enum LevitanusError {
     Poison(String),
     #[error("EnumError: can not set value '{0}' to enum")]
     Enum(String),
+    #[error("KeyError: {0} has no key {1}")]
+    KeyError(String, String),
 }

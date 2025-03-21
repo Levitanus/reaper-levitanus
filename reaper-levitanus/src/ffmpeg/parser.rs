@@ -148,7 +148,7 @@ fn parse_muxers(
                         extensions = Some(
                             cap[1]
                                 .to_string()
-                                .split(", ")
+                                .split(",")
                                 .map(|s| s.to_string())
                                 .collect(),
                         );
@@ -278,16 +278,11 @@ fn parse_encoders(
                 ParseFlow::Enum => parse_flow = parse_enum(i_line, &mut options)?,
             }
         }
-        let pixel_format = match &pixel_formats {
-            Some(fmts) => Some(fmts[0].clone()),
-            None => None,
-        };
         let encoder = Encoder {
             name,
             description,
             info: info.join("\n"),
             supported_pixel_formats: pixel_formats,
-            pixel_format,
             encoder_type,
             frame_level_multithreading,
             slice_level_multithreading,

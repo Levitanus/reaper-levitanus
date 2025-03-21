@@ -30,7 +30,7 @@ use crate::LevitanusError;
 mod render_settings;
 mod small_widgets;
 
-static PERSIST: bool = false;
+static PERSIST: bool = true;
 pub static BACKEND_ID_STRING: &str = "LevitanusFfmpegGui";
 pub static SOCKET_ADDRESS: &str = "127.0.0.1:49332";
 pub static EXT_SECTION: &str = "Levitanus";
@@ -61,7 +61,7 @@ impl Backend {
         })
     }
     fn ext_state(pr: &Project) -> ExtState<State, Project> {
-        ExtState::new(EXT_SECTION, EXT_STATE_KEY, None, PERSIST, pr, 10000)
+        ExtState::new(EXT_SECTION, EXT_STATE_KEY, None, PERSIST, pr, None)
     }
 }
 impl Drop for Backend {
@@ -88,7 +88,7 @@ impl ControlSurface for Backend {
                 debug!("server recieved a message: {:#?}", message);
                 match message {
                     IppMessage::Init => client.send(IppMessage::State(
-                        Self::ext_state(&pr).get().unwrap_or(State::default()),
+                        Self::ext_state(&pr).get()?.unwrap_or(State::default()),
                     ))?,
                     IppMessage::State(msg) => Self::ext_state(&pr).set(msg),
                     IppMessage::Shutdown => shutdown = true,
@@ -132,19 +132,6 @@ impl Default for State {
         }
     }
 }
-impl State {
-    fn update(&mut self, msg: StateMessage) -> anyhow::Result<()> {
-        match msg {
-            StateMessage::Muxer(muxer) => {
-                self.render_settings.muxer = muxer;
-            }
-            StateMessage::MuxerOptions(opts) => {
-                self.render_settings.muxer.options = opts;
-            }
-        }
-        Ok(())
-    }
-}
 
 #[derive(Debug)]
 enum ExitCode {
@@ -180,7 +167,7 @@ impl Front {
         let muxers = Self::build_muxers_list(&gui_state.json_path, &parsing_progress)
             .expect("can not build muxers list")
             .into_iter()
-            .filter(|mux| mux.video_codec.is_some())
+            .filter(|mux| mux.video_codec.is_some() && mux.extensions.is_some())
             .collect();
         let encoders = Self::build_encoders_list(&gui_state.json_path, &parsing_progress)
             .expect("can not build encoders list");

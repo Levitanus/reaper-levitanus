@@ -3,7 +3,7 @@ use std::{error::Error, path::PathBuf, process::Command, time::Duration};
 
 use super::filters::{Filter, ScaleAspectRationOption};
 use super::nodes::{Node, NodeContent, Pin};
-use super::options::{Encoder, Muxer, PixelFormat};
+use super::options::Opt;
 
 use fraction::Fraction;
 use itertools::Itertools;
@@ -15,20 +15,34 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RenderSettings {
-    pub muxer: Muxer,
-    pub encoder: Encoder,
+    pub muxer: String,
+    pub muxer_options: Vec<Opt>,
+    pub extension: String,
+    pub video_encoder: String,
+    pub video_encoder_options: Vec<Opt>,
+    pub audio_encoder: String,
+    pub audio_encoder_options: Vec<Opt>,
+    pub subtitle_encoder: String,
+    pub subtitle_encoder_options: Vec<Opt>,
     pub fps: Fraction,
-    pub pixel_format: PixelFormat,
+    pub pixel_format: String,
     pub resolution: Resolution,
     pub pad_color: String,
 }
 impl Default for RenderSettings {
     fn default() -> Self {
         Self {
-            muxer: Muxer::default(),
-            encoder: Encoder::default(),
+            muxer: "matroska".to_string(),
+            muxer_options: Vec::new(),
+            extension: "mkv".to_string(),
+            video_encoder: "libx264".to_string(),
+            video_encoder_options: Vec::new(),
+            audio_encoder: "vorbis".to_string(),
+            audio_encoder_options: Vec::new(),
+            subtitle_encoder: "ass".to_string(),
+            subtitle_encoder_options: Vec::new(),
             fps: Fraction::new(3000_u64, 1001_u64),
-            pixel_format: PixelFormat::default(),
+            pixel_format: "yuv420p".to_string(),
             resolution: Resolution::default(),
             pad_color: "DarkCyan".into(),
         }

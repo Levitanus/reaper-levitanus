@@ -1,15 +1,47 @@
 use egui::{CollapsingHeader, ComboBox, Context, DragValue, Grid, RichText, ScrollArea, Ui};
+use itertools::Itertools;
 
-use super::Front;
-use crate::ffmpeg::options::{DurationUnit, FfmpegColor, Opt, OptionParameter};
+use super::{Front, FrontMessage};
+use crate::{
+    ffmpeg::{
+        options::{DurationUnit, EncoderType, FfmpegColor, Opt, OptionParameter},
+        parser::ParsingProgress,
+        RenderSettings,
+    },
+    LevitanusError,
+};
 
 impl Front {
     pub(crate) fn widget_render_settings(&mut self, ctx: &Context, ui: &mut Ui) {
+        match self.parsing_progress {
+            ParsingProgress::Unparsed
+            | ParsingProgress::Progress(_)
+            | ParsingProgress::Result(Err(_)) => return,
+            ParsingProgress::Result(Ok(_)) => (),
+        }
         CollapsingHeader::new("render settings")
             .default_open(true)
             .show(ui, |ui| {
+                if ui.button("reset to defaults").clicked() {
+                    self.state.render_settings = RenderSettings::default();
+                    return;
+                }
+                // Muxer
                 ui.horizontal(|ui| {
-                    let current_muxer = &mut self.state.render_settings.muxer;
+                    let current_muxer = match self
+                        .muxers
+                        .iter()
+                        .find(|mux| mux.name == self.state.render_settings.muxer)
+                    {
+                        Some(m) => m.clone(),
+                        None => {
+                            self.emit(FrontMessage::Error(format!(
+                                "didn't found muxer {}",
+                                self.state.render_settings.muxer
+                            )));
+                            return;
+                        }
+                    };
                     ui.vertical(|ui| {
                         ui.set_max_width(120.0);
                         ui.label(RichText::new("muxer:").strong());
@@ -17,43 +49,160 @@ impl Front {
                             .selected_text(current_muxer.name.clone())
                             .show_ui(ui, |ui| {
                                 for mux in self.muxers.iter() {
+                                    let extensions = mux
+                                        .extensions
+                                        .as_ref()
+                                        .unwrap_or(&Vec::new())
+                                        .iter()
+                                        .join(",");
                                     if ui
-                                        .selectable_label(
-                                            mux.name == current_muxer.name,
-                                            mux.name.clone(),
-                                        )
-                                        .on_hover_ui(|ui| {
-                                            ui.label(mux.description.clone());
-                                        })
+                                        .selectable_label(mux.name == current_muxer.name, &mux.name)
+                                        .on_hover_text(format!(
+                                            "{}\nextensions: {:?}",
+                                            &mux.description, extensions
+                                        ))
                                         .clicked()
                                     {
-                                        *current_muxer = mux.clone();
+                                        self.state.render_settings.muxer = mux.name.clone();
+                                        if let Some(c) = &mux.video_codec {
+                                            self.state.render_settings.video_encoder = c.clone()
+                                        }
+                                        if let Some(c) = &mux.audio_codec {
+                                            self.state.render_settings.audio_encoder = c.clone()
+                                        }
+                                        if let Some(c) = &mux.subtitle_codec {
+                                            self.state.render_settings.subtitle_encoder = c.clone()
+                                        }
+                                        if let Some(ext) = mux.extensions.as_ref() {
+                                            self.state.render_settings.extension = ext[0].clone();
+                                        }
                                     }
                                 }
                             });
                         ui.label(RichText::new(current_muxer.description.clone()));
-                        if let Some(ext) = &current_muxer.extensions {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Extension:").strong());
-                                ui.label(RichText::new(
-                                    ext.first().unwrap_or(&"unknown".to_string()),
-                                ));
-                            });
+                        if let Some(extensions) = &current_muxer.extensions {
+                            ui.label(RichText::new("extension:").strong());
+                            ComboBox::from_id_salt("extension")
+                                .selected_text(&self.state.render_settings.extension)
+                                .show_ui(ui, |ui| {
+                                    for ext in extensions {
+                                        ui.selectable_value(
+                                            &mut self.state.render_settings.extension,
+                                            ext.clone(),
+                                            ext,
+                                        );
+                                    }
+                                });
                         }
                     });
-                    Self::widget_options(ui, "muxer".to_string(), &mut current_muxer.options);
+                    let mut options: Vec<Opt> = current_muxer
+                        .options
+                        .into_iter()
+                        .map(|opt| {
+                            for c_opt in self.state.render_settings.muxer_options.iter_mut() {
+                                if c_opt.name == opt.name {
+                                    return c_opt.clone();
+                                }
+                            }
+                            opt
+                        })
+                        .collect();
+                    Self::widget_options(ui, "muxer".to_string(), &mut options);
+                    self.state.render_settings.muxer_options = options
+                        .into_iter()
+                        .filter(|opt| opt.parameter.is_assigned())
+                        .collect();
+                });
+                ui.horizontal(|ui| {
+                    let current_encoder = if let Some(enc) = self
+                        .encoders
+                        .iter()
+                        .find(|enc| enc.name == self.state.render_settings.video_encoder)
+                    {
+                        enc
+                    } else {
+                        return self.emit(FrontMessage::Error(
+                            LevitanusError::KeyError(
+                                "encoder".to_string(),
+                                self.state.render_settings.video_encoder.clone(),
+                            )
+                            .to_string(),
+                        ));
+                    };
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new("video encoder").strong());
+                        ComboBox::from_id_salt("encoder")
+                            .selected_text(&self.state.render_settings.video_encoder)
+                            .show_ui(ui, |ui| {
+                                for enc in self
+                                    .encoders
+                                    .iter()
+                                    .filter(|e| e.encoder_type == EncoderType::Video)
+                                {
+                                    if ui
+                                        .selectable_label(
+                                            enc.name == current_encoder.name,
+                                            &enc.name,
+                                        )
+                                        .clicked()
+                                    {
+                                        self.state.render_settings.video_encoder = enc.name.clone();
+                                        self.state.render_settings.video_encoder_options =
+                                            Vec::new();
+                                    }
+                                }
+                            });
+                        ui.label(RichText::new("pixel format").strong());
+                        ComboBox::from_id_salt("pixel_format")
+                            .selected_text(&self.state.render_settings.pixel_format)
+                            .show_ui(ui, |ui| {
+                                if let Some(px_fmts) = &current_encoder.supported_pixel_formats {
+                                    for px_fmt in px_fmts {
+                                        if ui
+                                            .selectable_label(
+                                                px_fmt == &self.state.render_settings.pixel_format,
+                                                px_fmt,
+                                            )
+                                            .clicked()
+                                        {
+                                            self.state.render_settings.pixel_format =
+                                                px_fmt.clone();
+                                        }
+                                    }
+                                }
+                            });
+                    });
+                    let mut options: Vec<Opt> = current_encoder
+                        .options
+                        .clone()
+                        .into_iter()
+                        .map(|opt| {
+                            for c_opt in self.state.render_settings.video_encoder_options.iter_mut()
+                            {
+                                if c_opt.name == opt.name {
+                                    return c_opt.clone();
+                                }
+                            }
+                            opt
+                        })
+                        .collect();
+                    Self::widget_options(ui, "encoder".to_string(), &mut options);
+                    self.state.render_settings.video_encoder_options = options
+                        .into_iter()
+                        .filter(|opt| opt.parameter.is_assigned())
+                        .collect();
                 });
             });
     }
     fn widget_options(ui: &mut Ui, id: String, options: &mut Vec<Opt>) {
-        ScrollArea::vertical()
+        ui.push_id(&id, |ui|{
+            ScrollArea::vertical()
             .max_height(200.0)
             .min_scrolled_height(100.0)
             .show(ui, |ui| {
-                // ui.set_max_width(ui.available_width() - 30.0);
-                Grid::new(id.clone() + "options")
+                Grid::new("options")
                     .min_col_width(50.0)
-                    .max_col_width(400.0)
+                    .max_col_width(ui.available_width()/2.0)
                     .num_columns(3)
                     .striped(true)
                     .spacing((10.0, 10.0))
@@ -459,5 +608,6 @@ impl Front {
                     });
                 ui.set_height(ui.available_height());
             });
+        });
     }
 }

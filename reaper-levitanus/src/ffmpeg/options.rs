@@ -1,4 +1,4 @@
-use std::{collections::HashMap, num::ParseIntError, time::Duration};
+use std::{num::ParseIntError, time::Duration};
 
 use egui::Color32;
 use serde::{Deserialize, Serialize};
@@ -24,7 +24,6 @@ pub struct Encoder {
     pub description: String,
     pub info: String,
     pub supported_pixel_formats: Option<Vec<String>>,
-    pub pixel_format: Option<String>,
     pub encoder_type: EncoderType,
     pub frame_level_multithreading: bool,
     pub slice_level_multithreading: bool,
@@ -119,6 +118,26 @@ impl OptionParameter {
             Self::ImageSize(_) => Ok(Self::ImageSize(Some(val))),
             Self::FrameRate(_) => Ok(Self::FrameRate(Some(val))),
             _ => Err(LevitanusError::Enum(val)),
+        }
+    }
+    pub fn is_assigned(&self) -> bool {
+        match self {
+            Self::Int(a) => a.is_some(),
+            Self::String(a) => a.is_some(),
+            Self::Float(a) => a.is_some(),
+            Self::Bool(a) => a.is_some(),
+            Self::Binary(a) => a.is_some(),
+            Self::Rational(a) => a.is_some(),
+            Self::Duration(a) => a.is_some(),
+            Self::Dictionary(a) => a.is_some(),
+            Self::Color(a) => a.is_some(),
+            Self::ImageSize(a) => a.is_some(),
+            Self::FrameRate(a) => a.is_some(),
+            Self::Enum {
+                items: _,
+                selected_idx,
+            } => selected_idx.is_some(),
+            Self::Flags { items: _, selected } => selected.is_some(),
         }
     }
 }
