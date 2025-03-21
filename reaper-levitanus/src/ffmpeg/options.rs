@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::{num::ParseIntError, time::Duration};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use vizia::prelude::Data;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Data)]
+use crate::LevitanusError;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Muxer {
     pub name: String,
     pub description: String,
@@ -16,12 +17,12 @@ pub struct Muxer {
     pub options: Vec<Opt>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Data)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Encoder {
     pub name: String,
     pub description: String,
     pub info: String,
-    pub pixel_formats: Option<Vec<String>>,
+    pub supported_pixel_formats: Option<Vec<String>>,
     pub encoder_type: EncoderType,
     pub frame_level_multithreading: bool,
     pub slice_level_multithreading: bool,
@@ -31,7 +32,7 @@ pub struct Encoder {
     pub options: Vec<Opt>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Data)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ParsedFilter {
     pub name: String,
     pub description: String,
@@ -43,14 +44,14 @@ pub struct ParsedFilter {
     pub options: Vec<Opt>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Data)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum EncoderType {
     Video,
     Audio,
     Subtitle,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Data)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Opt {
     pub name: String,
     pub description: String,
@@ -58,24 +59,89 @@ pub struct Opt {
     pub default: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Data)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum OptionParameter {
-    Int,
-    String,
-    Float,
-    Bool,
-    Binary,
-    Rational,
-    Duration,
-    Dictionary,
-    Color,
-    ImageSize,
-    FrameRate,
-    Enum(HashMap<String, String>),
-    Flags(HashMap<String, String>),
+    Int(Option<i32>),
+    String(Option<String>),
+    Float(Option<f64>),
+    Bool(Option<bool>),
+    Binary(Option<String>),
+    Rational(Option<String>),
+    Duration(Option<DurationUnit>),
+    Dictionary(Option<String>),
+    Color(Option<FfmpegColor>),
+    ImageSize(Option<String>),
+    FrameRate(Option<String>),
+    Enum {
+        items: Vec<String>,
+        selected_idx: Option<usize>,
+    },
+    Flags {
+        items: Vec<String>,
+        selected: Option<Vec<bool>>,
+    },
+}
+impl OptionParameter {
+    pub(crate) fn with_none(&mut self) -> Self {
+        match self {
+            Self::Int(_) => Self::Int(None),
+            Self::String(_) => Self::String(None),
+            Self::Float(_) => Self::Float(None),
+            Self::Bool(_) => Self::Bool(None),
+            Self::Binary(_) => Self::Binary(None),
+            Self::Rational(_) => Self::Rational(None),
+            Self::Duration(_) => Self::Duration(None),
+            Self::Dictionary(_) => Self::Dictionary(None),
+            Self::Color(_) => Self::Color(None),
+            Self::ImageSize(_) => Self::ImageSize(None),
+            Self::FrameRate(_) => Self::FrameRate(None),
+            Self::Enum {
+                items,
+                selected_idx: _,
+            } => Self::Enum {
+                items: items.clone(),
+                selected_idx: None,
+            },
+            Self::Flags { items, selected: _ } => Self::Flags {
+                items: items.clone(),
+                selected: None,
+            },
+        }
+    }
+    pub(crate) fn with_new_string_value(&mut self, val: String) -> Result<Self, LevitanusError> {
+        match self {
+            Self::String(_) => Ok(Self::String(Some(val))),
+            Self::Binary(_) => Ok(Self::Binary(Some(val))),
+            Self::Rational(_) => Ok(Self::Rational(Some(val))),
+            Self::Dictionary(_) => Ok(Self::Dictionary(Some(val))),
+            Self::ImageSize(_) => Ok(Self::ImageSize(Some(val))),
+            Self::FrameRate(_) => Ok(Self::FrameRate(Some(val))),
+            _ => Err(LevitanusError::Enum(val)),
+        }
+    }
+    pub fn is_assigned(&self) -> bool {
+        match self {
+            Self::Int(a) => a.is_some(),
+            Self::String(a) => a.is_some(),
+            Self::Float(a) => a.is_some(),
+            Self::Bool(a) => a.is_some(),
+            Self::Binary(a) => a.is_some(),
+            Self::Rational(a) => a.is_some(),
+            Self::Duration(a) => a.is_some(),
+            Self::Dictionary(a) => a.is_some(),
+            Self::Color(a) => a.is_some(),
+            Self::ImageSize(a) => a.is_some(),
+            Self::FrameRate(a) => a.is_some(),
+            Self::Enum {
+                items: _,
+                selected_idx,
+            } => selected_idx.is_some(),
+            Self::Flags { items: _, selected } => selected.is_some(),
+        }
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Data)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PixelFormat {
     pub name: String,
     pub input_support: bool,
@@ -91,79 +157,25 @@ pub struct PixelFormat {
 impl Default for Muxer {
     fn default() -> Self {
         let json = json!({
-        "name":"matroska",
-        "description":"Matroska",
-        "info":"Muxer matroska [Matroska]:\nMime type: video/x-matroska.",
-        "extensions":["mkv"],
-        "video_codec":"h264",
-        "audio_codec":"vorbis",
-        "subtitle_codec":"ass",
-        "options":[
+          "name": "matroska",
+          "description": "Matroska",
+          "info": "Muxer matroska [Matroska]:\nMime type: video/x-matroska.",
+          "extensions": [
+            "mkv"
+          ],
+          "video_codec": "h264",
+          "audio_codec": "vorbis",
+          "subtitle_codec": "ass",
+          "options": [
             {
-                "name":"reserve_index_space",
-                "description":"reserve a given amount of space (in bytes) at the beginning of the file for the index (cues) (from 0 to INT_MAX) (default 0)",
-                "parameter":"Int",
-                "default":"(default 0)"
-            },
-            {
-                "name":"cues_to_front",
-                "description":"move Cues (the index) to the front by shifting data if necessary (default false)",
-                "parameter":"Bool","default":"(default false)"
-            },
-            {
-                "name":"cluster_size_limit",
-                "description":"store at most the provided amount of bytes in a cluster (from -1 to INT_MAX) (default -1)",
-                "parameter":"Int","default":"(default -1)"
-            },
-            {
-                "name":"cluster_time_limit",
-                "description":"store at most the provided number of milliseconds in a cluster (from -1 to I64_MAX) (default -1)",
-                "parameter":"Int","default":"(default -1)"
-            },
-            {
-                "name":"dash",
-                "description":"create a WebM file conforming to WebM DASH specification (default false)",
-                "parameter":"Bool",
-                "default":"(default false)"
-            },
-            {
-                "name":"dash_track_number",
-                "description":"track number for the DASH stream (from 1 to INT_MAX) (default 1)",
-                "parameter":"Int",
-                "default":"(default 1)"
-            },
-            {
-                "name":"live",
-                "description":"write files assuming it is a live stream (default false)",
-                "parameter":"Bool",
-                "default":"(default false)"
-            },
-            {
-                "name":"allow_raw_vfw",
-                "description":"allow raw VFW mode (default false)",
-                "parameter":"Bool",
-                "default":"(default false)"
-            },
-            {
-                "name":"flipped_raw_rgb",
-                "description":"store raw RGB bitmaps in VFW mode in bottom-up mode (default false)",
-                "parameter":"Bool",
-                "default":"(default false)"
-            },
-            {
-                "name":"write_crc32",
-                "description":"write a CRC32 element inside every Level 1 element (default true)",
-                "parameter":"Bool",
-                "default":"(default true)"
-            },
-            {
-                "name":"default_mode",
-                "description":"control how a track's FlagDefault is inferred (from 0 to 2) (default passthrough)",
-                "parameter":{
-                    "Enum":{"infer_no_subs":"","passthrough":"","infer":""}
+                "name": "d",
+                "description": "set minimum duration in seconds (default 2)",
+                "parameter": {
+                  "Duration": null
                 },
-                "default":"(default passthrough)"
-            }]
+                "default": "(default 2)"
+            },
+          ]
         });
         serde_json::from_value(json).expect("can not deserealize MKV muxer in default")
     }
@@ -198,295 +210,7 @@ impl Default for Encoder {
             "is_experimenal": false,
             "supports_draw_horiz_band": false,
             "supports_direct_rendering_method_1": true,
-            "options": [
-                {
-                    "name": "preset",
-                    "description": "Set the encoding preset (cf. x264 --fullhelp) (default \"medium\")",
-                    "parameter": "String",
-                    "default": "(default \"medium\")"
-                },
-                {
-                    "name": "tune",
-                    "description": "Tune the encoding params (cf. x264 --fullhelp)",
-                    "parameter": "String",
-                    "default": null
-                },
-                {
-                    "name": "profile",
-                    "description": "Set profile restrictions (cf. x264 --fullhelp)",
-                    "parameter": "String",
-                    "default": null
-                },
-                {
-                    "name": "fastfirstpass",
-                    "description": "Use fast settings when encoding first pass (default true)",
-                    "parameter": "Bool",
-                    "default": "(default true)"
-                },
-                {
-                    "name": "level",
-                    "description": "Specify level (as defined by Annex A)",
-                    "parameter": "String",
-                    "default": null
-                },
-                {
-                    "name": "passlogfile",
-                    "description": "Filename for 2 pass stats",
-                    "parameter": "String",
-                    "default": null
-                },
-                {
-                    "name": "wpredp",
-                    "description": "Weighted prediction for P-frames",
-                    "parameter": "String",
-                    "default": null
-                },
-                {
-                    "name": "a53cc",
-                    "description": "Use A53 Closed Captions (if available) (default true)",
-                    "parameter": "Bool",
-                    "default": "(default true)"
-                },
-                {
-                    "name": "x264opts",
-                    "description": "x264 options",
-                    "parameter": "String",
-                    "default": null
-                },
-                {
-                    "name": "crf",
-                    "description": "Select the quality for constant quality mode (from -1 to FLT_MAX) (default -1)",
-                    "parameter": "Float",
-                    "default": "(default -1)"
-                },
-                {
-                    "name": "crf_max",
-                    "description": "In CRF mode, prevents VBV from lowering quality beyond this point. (from -1 to FLT_MAX) (default -1)",
-                    "parameter": "Float",
-                    "default": "(default -1)"
-                },
-                {
-                    "name": "qp",
-                    "description": "Constant quantization parameter rate control method (from -1 to INT_MAX) (default -1)",
-                    "parameter": "Int",
-                    "default": "(default -1)"
-                },
-                {
-                    "name": "mode",
-                    "description": "AQ method (from -1 to INT_MAX) (default -1)",
-                    "parameter": {
-                        "Enum": {
-                            "none": "",
-                            "autovariance": "",
-                            "variance": ""
-                        }
-                    },
-                    "default": "(default -1)"
-                },
-                {
-                    "name": "psy",
-                    "description": "Use psychovisual optimizations. (default auto)",
-                    "parameter": "Bool",
-                    "default": "(default auto)"
-                },
-                {
-                    "name": "rd",
-                    "description": "Strength of psychovisual optimization, in <psy-rd>:<psy-trellis> format.",
-                    "parameter": "String",
-                    "default": null
-                },
-                {
-                    "name": "lookahead",
-                    "description": "Number of frames to look ahead for frametype and ratecontrol (from -1 to INT_MAX) (default -1)",
-                    "parameter": "Int",
-                    "default": "(default -1)"
-                },
-                {
-                    "name": "weightb",
-                    "description": "Weighted prediction for B-frames. (default auto)",
-                    "parameter": "Bool",
-                    "default": "(default auto)"
-                },
-                {
-                    "name": "weightp",
-                    "description": "Weighted prediction analysis method. (from -1 to INT_MAX) (default -1)",
-                    "parameter": {
-                        "Enum": {
-                            "simple": "",
-                            "none": "",
-                            "smart": ""
-                        }
-                    },
-                    "default": "(default -1)"
-                },
-                {
-                    "name": "refresh",
-                    "description": "Use Periodic Intra Refresh instead of IDR frames. (default auto)",
-                    "parameter": "Bool",
-                    "default": "(default auto)"
-                },
-                {
-                    "name": "compat",
-                    "description": "Bluray compatibility workarounds. (default auto)",
-                    "parameter": "Bool",
-                    "default": "(default auto)"
-                },
-                {
-                    "name": "bias",
-                    "description": "Influences how often B-frames are used (from INT_MIN to INT_MAX) (default INT_MIN)",
-                    "parameter": "Int",
-                    "default": "(default INT_MIN)"
-                },
-                {
-                    "name": "pyramid",
-                    "description": "Keep some B-frames as references. (from -1 to INT_MAX) (default -1)",
-                    "parameter": {
-                        "Enum": {
-                            "normal": "",
-                            "none": "",
-                            "strict": ""
-                        }
-                    },
-                    "default": "(default -1)"
-                },
-                {
-                    "name": "8x8dct",
-                    "description": "High profile 8x8 transform. (default auto)",
-                    "parameter": "Bool",
-                    "default": "(default auto)"
-                },
-                {
-                    "name": "pskip",
-                    "description": "(default auto)",
-                    "parameter": "Bool",
-                    "default": "(default auto)"
-                },
-                {
-                    "name": "aud",
-                    "description": "Use access unit delimiters. (default auto)",
-                    "parameter": "Bool",
-                    "default": "(default auto)"
-                },
-                {
-                    "name": "mbtree",
-                    "description": "Use macroblock tree ratecontrol. (default auto)",
-                    "parameter": "Bool",
-                    "default": "(default auto)"
-                },
-                {
-                    "name": "deblock",
-                    "description": "Loop filter parameters, in <alpha:beta> form.",
-                    "parameter": "String",
-                    "default": null
-                },
-                {
-                    "name": "cplxblur",
-                    "description": "Reduce fluctuations in QP (before curve compression) (from -1 to FLT_MAX) (default -1)",
-                    "parameter": "Float",
-                    "default": "(default -1)"
-                },
-                {
-                    "name": "partitions",
-                    "description": "A comma-separated list of partitions to consider. Possible values: p8x8, p4x4, b8x8, i8x8, i4x4, none, all",
-                    "parameter": "String",
-                    "default": null
-                },
-                {
-                    "name": "pred",
-                    "description": "Direct MV prediction mode (from -1 to INT_MAX) (default -1)",
-                    "parameter": {
-                        "Enum": {
-                            "spatial": "",
-                            "none": "",
-                            "temporal": "",
-                            "auto": ""
-                        }
-                    },
-                    "default": "(default -1)"
-                },
-                {
-                    "name": "stats",
-                    "description": "Filename for 2 pass stats",
-                    "parameter": "String",
-                    "default": null
-                },
-                {
-                    "name": "hrd",
-                    "description": "Signal HRD information (requires vbv-bufsize; cbr not allowed in .mp4) (from -1 to INT_MAX) (default -1)",
-                    "parameter": {
-                        "Enum": {
-                            "none": "",
-                            "vbr": "",
-                            "cbr": ""
-                        }
-                    },
-                    "default": "(default -1)"
-                },
-                {
-                    "name": "me_method",
-                    "description": "Set motion estimation method (from -1 to 4) (default -1)",
-                    "parameter": {
-                        "Enum": {
-                            "dia": "",
-                            "hex": "",
-                            "umh": "",
-                            "tesa": "",
-                            "esa": ""
-                        }
-                    },
-                    "default": "(default -1)"
-                },
-                {
-                    "name": "coder",
-                    "description": "Coder type (from -1 to 1) (default default)",
-                    "parameter": {
-                        "Enum": {
-                            "cavlc": "",
-                            "default": "",
-                            "ac": "",
-                            "vlc": "",
-                            "cabac": ""
-                        }
-                    },
-                    "default": "(default default)"
-                },
-                {
-                    "name": "chromaoffset",
-                    "description": "QP difference between chroma and luma (from INT_MIN to INT_MAX) (default 0)",
-                    "parameter": "Int",
-                    "default": "(default 0)"
-                },
-                {
-                    "name": "sc_threshold",
-                    "description": "Scene change threshold (from INT_MIN to INT_MAX) (default -1)",
-                    "parameter": "Int",
-                    "default": "(default -1)"
-                },
-                {
-                    "name": "noise_reduction",
-                    "description": "Noise reduction (from INT_MIN to INT_MAX) (default -1)",
-                    "parameter": "Int",
-                    "default": "(default -1)"
-                },
-                {
-                    "name": "udu_sei",
-                    "description": "Use user data unregistered SEI if available (default false)",
-                    "parameter": "Bool",
-                    "default": "(default false)"
-                },
-                {
-                    "name": "params",
-                    "description": "Override the x264 configuration using a :-separated list of key=value parameters",
-                    "parameter": "Dictionary",
-                    "default": null
-                },
-                {
-                    "name": "mb_info",
-                    "description": "Set mb_info data through AVSideData, only useful when used from the API (default false)",
-                    "parameter": "Bool",
-                    "default": "(default false)"
-                }
-            ]
+            "options": []
         }"#;
         serde_json::from_str(json).expect("Can not desereilize default libx264 encoder")
     }
@@ -507,4 +231,409 @@ impl Default for PixelFormat {
         }"#;
         serde_json::from_str(json).expect("can not deserealize default yuv420p pixel format")
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub enum DurationUnit {
+    Seconds(f64),
+    Milliseconds(i32),
+    Microseconds(i32),
+    Timestamp {
+        hours: u32,
+        minutes: u32,
+        seconds: f64,
+    },
+}
+impl DurationUnit {
+    pub fn as_duration(&self) -> Duration {
+        match self {
+            Self::Seconds(s) => Duration::from_secs_f64(*s),
+            Self::Milliseconds(ms) => Duration::from_millis((*ms) as u64),
+            Self::Microseconds(us) => Duration::from_micros(*us as u64),
+            Self::Timestamp {
+                hours,
+                minutes,
+                seconds,
+            } => {
+                Duration::from_secs((*hours as u64) * 3600 + (*minutes as u64) * 60)
+                    + Duration::from_secs_f64(*seconds)
+            }
+        }
+    }
+    pub fn as_seconds(&self) -> Self {
+        Self::Seconds(self.as_duration().as_secs_f64())
+    }
+    pub fn as_milliseconds(&self) -> Self {
+        Self::Milliseconds(self.as_duration().as_millis() as i32)
+    }
+    pub fn as_microseconds(&self) -> Self {
+        Self::Microseconds(self.as_duration().as_micros() as i32)
+    }
+    pub fn as_timestamp(&self) -> Self {
+        let dur = self.as_duration();
+        let secs = dur.as_secs();
+        let hours = secs / 3600;
+        let minutes = secs % 3600 / 60;
+        let seconds = (secs % 60) as f64 + ((dur.subsec_micros() as f64) / 1000000.0);
+        Self::Timestamp {
+            hours: hours as u32,
+            minutes: minutes as u32,
+            seconds,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct FfmpegColor {
+    pub color: u32,
+    pub alpha: u8,
+}
+impl Default for FfmpegColor {
+    fn default() -> Self {
+        Self {
+            color: 0x0,
+            alpha: 0xff,
+        }
+    }
+}
+// impl From<Color32> for FfmpegColor {
+//     fn from(value: Color32) -> Self {
+//         let alpha = value.a();
+//         let color: u32 =
+//             ((value.r() as u32) << 16) + ((value.g() as u32) << 8) + (value.b() as u32);
+//         Self { color, alpha }
+//     }
+// }
+// impl Into<Color32> for FfmpegColor {
+//     fn into(self) -> Color32 {
+//         Color32::from_rgba_premultiplied(
+//             (self.color >> 16) as u8,
+//             (self.color >> 8) as u8,
+//             (self.color % 0xffff00) as u8,
+//             self.alpha,
+//         )
+//     }
+// }
+impl FfmpegColor {
+    pub fn new(color: u32, alpha: u8) -> Self {
+        Self { color, alpha }
+    }
+    pub fn from_hex(hex: impl AsRef<str>) -> Result<Self, ParseIntError> {
+        let hex = hex.as_ref();
+        let color: u32 = hex.parse()?;
+        Ok(Self::new(color, 0xff))
+    }
+    pub fn hex(&self) -> String {
+        let val: u64 = ((self.color as u64) << 8) + (self.alpha as u64);
+        format!("{:#10x}", val)
+    }
+    pub(crate) fn ffmpeg_representation(&self) -> String {
+        format!("{:#08x}@{:#04x}", self.color, self.alpha)
+    }
+    pub(crate) fn built_in_colors() -> impl Iterator<Item = (&'static str, u32)> {
+        let names = vec![
+            "AliceBlue",
+            "AntiqueWhite",
+            "Aqua",
+            "Aquamarine",
+            "Azure",
+            "Beige",
+            "Bisque",
+            "Black",
+            "BlanchedAlmond",
+            "Blue",
+            "BlueViolet",
+            "Brown",
+            "BurlyWood",
+            "CadetBlue",
+            "Chartreuse",
+            "Chocolate",
+            "Coral",
+            "CornflowerBlue",
+            "Cornsilk",
+            "Crimson",
+            "Cyan",
+            "DarkBlue",
+            "DarkCyan",
+            "DarkGoldenRod",
+            "DarkGray",
+            "DarkGreen",
+            "DarkKhaki",
+            "DarkMagenta",
+            "DarkOliveGreen",
+            "Darkorange",
+            "DarkOrchid",
+            "DarkRed",
+            "DarkSalmon",
+            "DarkSeaGreen",
+            "DarkSlateBlue",
+            "DarkSlateGray",
+            "DarkTurquoise",
+            "DarkViolet",
+            "DeepPink",
+            "DeepSkyBlue",
+            "DimGray",
+            "DodgerBlue",
+            "FireBrick",
+            "FloralWhite",
+            "ForestGreen",
+            "Fuchsia",
+            "Gainsboro",
+            "GhostWhite",
+            "Gold",
+            "GoldenRod",
+            "Gray",
+            "Green",
+            "GreenYellow",
+            "HoneyDew",
+            "HotPink",
+            "IndianRed",
+            "Indigo",
+            "Ivory",
+            "Khaki",
+            "Lavender",
+            "LavenderBlush",
+            "LawnGreen",
+            "LemonChiffon",
+            "LightBlue",
+            "LightCoral",
+            "LightCyan",
+            "LightGoldenRodYellow",
+            "LightGreen",
+            "LightGrey",
+            "LightPink",
+            "LightSalmon",
+            "LightSeaGreen",
+            "LightSkyBlue",
+            "LightSlateGray",
+            "LightSteelBlue",
+            "LightYellow",
+            "Lime",
+            "LimeGreen",
+            "Linen",
+            "Magenta",
+            "Maroon",
+            "MediumAquaMarine",
+            "MediumBlue",
+            "MediumOrchid",
+            "MediumPurple",
+            "MediumSeaGreen",
+            "MediumSlateBlue",
+            "MediumSpringGreen",
+            "MediumTurquoise",
+            "MediumVioletRed",
+            "MidnightBlue",
+            "MintCream",
+            "MistyRose",
+            "Moccasin",
+            "NavajoWhite",
+            "Navy",
+            "OldLace",
+            "Olive",
+            "OliveDrab",
+            "Orange",
+            "OrangeRed",
+            "Orchid",
+            "PaleGoldenRod",
+            "PaleGreen",
+            "PaleTurquoise",
+            "PaleVioletRed",
+            "PapayaWhip",
+            "PeachPuff",
+            "Peru",
+            "Pink",
+            "Plum",
+            "PowderBlue",
+            "Purple",
+            "Red",
+            "RosyBrown",
+            "RoyalBlue",
+            "SaddleBrown",
+            "Salmon",
+            "SandyBrown",
+            "SeaGreen",
+            "SeaShell",
+            "Sienna",
+            "Silver",
+            "SkyBlue",
+            "SlateBlue",
+            "SlateGray",
+            "Snow",
+            "SpringGreen",
+            "SteelBlue",
+            "Tan",
+            "Teal",
+            "Thistle",
+            "Tomato",
+            "Turquoise",
+            "Violet",
+            "Wheat",
+            "White",
+            "WhiteSmoke",
+            "Yellow",
+            "YellowGreen",
+        ];
+        let values = vec![
+            0xF0F8FF_u32,
+            0xFAEBD7_u32,
+            0x00FFFF_u32,
+            0x7FFFD4_u32,
+            0xF0FFFF_u32,
+            0xF5F5DC_u32,
+            0xFFE4C4_u32,
+            0x000000_u32,
+            0xFFEBCD_u32,
+            0x0000FF_u32,
+            0x8A2BE2_u32,
+            0xA52A2A_u32,
+            0xDEB887_u32,
+            0x5F9EA0_u32,
+            0x7FFF00_u32,
+            0xD2691E_u32,
+            0xFF7F50_u32,
+            0x6495ED_u32,
+            0xFFF8DC_u32,
+            0xDC143C_u32,
+            0x00FFFF_u32,
+            0x00008B_u32,
+            0x008B8B_u32,
+            0xB8860B_u32,
+            0xA9A9A9_u32,
+            0x006400_u32,
+            0xBDB76B_u32,
+            0x8B008B_u32,
+            0x556B2F_u32,
+            0xFF8C00_u32,
+            0x9932CC_u32,
+            0x8B0000_u32,
+            0xE9967A_u32,
+            0x8FBC8F_u32,
+            0x483D8B_u32,
+            0x2F4F4F_u32,
+            0x00CED1_u32,
+            0x9400D3_u32,
+            0xFF1493_u32,
+            0x00BFFF_u32,
+            0x696969_u32,
+            0x1E90FF_u32,
+            0xB22222_u32,
+            0xFFFAF0_u32,
+            0x228B22_u32,
+            0xFF00FF_u32,
+            0xDCDCDC_u32,
+            0xF8F8FF_u32,
+            0xFFD700_u32,
+            0xDAA520_u32,
+            0x808080_u32,
+            0x008000_u32,
+            0xADFF2F_u32,
+            0xF0FFF0_u32,
+            0xFF69B4_u32,
+            0xCD5C5C_u32,
+            0x4B0082_u32,
+            0xFFFFF0_u32,
+            0xF0E68C_u32,
+            0xE6E6FA_u32,
+            0xFFF0F5_u32,
+            0x7CFC00_u32,
+            0xFFFACD_u32,
+            0xADD8E6_u32,
+            0xF08080_u32,
+            0xE0FFFF_u32,
+            0xFAFAD2_u32,
+            0x90EE90_u32,
+            0xD3D3D3_u32,
+            0xFFB6C1_u32,
+            0xFFA07A_u32,
+            0x20B2AA_u32,
+            0x87CEFA_u32,
+            0x778899_u32,
+            0xB0C4DE_u32,
+            0xFFFFE0_u32,
+            0x00FF00_u32,
+            0x32CD32_u32,
+            0xFAF0E6_u32,
+            0xFF00FF_u32,
+            0x800000_u32,
+            0x66CDAA_u32,
+            0x0000CD_u32,
+            0xBA55D3_u32,
+            0x9370D8_u32,
+            0x3CB371_u32,
+            0x7B68EE_u32,
+            0x00FA9A_u32,
+            0x48D1CC_u32,
+            0xC71585_u32,
+            0x191970_u32,
+            0xF5FFFA_u32,
+            0xFFE4E1_u32,
+            0xFFE4B5_u32,
+            0xFFDEAD_u32,
+            0x000080_u32,
+            0xFDF5E6_u32,
+            0x808000_u32,
+            0x6B8E23_u32,
+            0xFFA500_u32,
+            0xFF4500_u32,
+            0xDA70D6_u32,
+            0xEEE8AA_u32,
+            0x98FB98_u32,
+            0xAFEEEE_u32,
+            0xD87093_u32,
+            0xFFEFD5_u32,
+            0xFFDAB9_u32,
+            0xCD853F_u32,
+            0xFFC0CB_u32,
+            0xDDA0DD_u32,
+            0xB0E0E6_u32,
+            0x800080_u32,
+            0xFF0000_u32,
+            0xBC8F8F_u32,
+            0x4169E1_u32,
+            0x8B4513_u32,
+            0xFA8072_u32,
+            0xF4A460_u32,
+            0x2E8B57_u32,
+            0xFFF5EE_u32,
+            0xA0522D_u32,
+            0xC0C0C0_u32,
+            0x87CEEB_u32,
+            0x6A5ACD_u32,
+            0x708090_u32,
+            0xFFFAFA_u32,
+            0x00FF7F_u32,
+            0x4682B4_u32,
+            0xD2B48C_u32,
+            0x008080_u32,
+            0xD8BFD8_u32,
+            0xFF6347_u32,
+            0x40E0D0_u32,
+            0xEE82EE_u32,
+            0xF5DEB3_u32,
+            0xFFFFFF_u32,
+            0xF5F5F5_u32,
+            0xFFFF00_u32,
+            0x9ACD32_u32,
+        ];
+        names.into_iter().zip(values)
+    }
+}
+
+#[test]
+fn test_ffmpeg_color() {
+    let color = FfmpegColor::new(
+        FfmpegColor::built_in_colors()
+            .find(|(key, _)| *key == "Wheat")
+            .unwrap()
+            .1,
+        0xff,
+    );
+    assert_eq!(color.color, 0xF5DEB3_u32, "color does not match");
+    assert_eq!(color.alpha, 0xff, "alpha is wrong");
+    assert_eq!(
+        color.ffmpeg_representation().to_uppercase(),
+        "0XF5DEB3@0XFF",
+        "representation is wrong"
+    );
+    assert_eq!(color.hex().to_uppercase(), "0XF5DEB3FF", "hex is wrong");
 }

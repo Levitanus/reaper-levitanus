@@ -1,7 +1,7 @@
 use log::debug;
 use vizia::prelude::*;
 
-use super::FrontState;
+use super::{FrontState, Widgets};
 use crate::ffmpeg::{gui::FrontMessage, parser::ParsingProgress};
 
 pub fn modal_yes_no<Y, N>(
@@ -40,8 +40,10 @@ pub fn modal_yes_no<Y, N>(
 }
 
 pub fn widget_parser(cx: &mut Context) {
-    Binding::new(cx, FrontState::parsing_progress, |cx, lens| {
-        match lens.get(cx) {
+    Binding::new(
+        cx,
+        FrontState::widgets.then(Widgets::parsing_progress),
+        |cx, lens| match lens.get(cx) {
             ParsingProgress::Unparsed => {
                 modal_yes_no(
                     cx,
@@ -68,8 +70,14 @@ pub fn widget_parser(cx: &mut Context) {
                     }
 
                     ParsingProgress::Progress(_) => {
-                        ProgressBar::horizontal(cx, FrontState::parsing_progress_f32)
-                            .width(Percentage(90.0));
+                        ProgressBar::horizontal(
+                            cx,
+                            lens.map(|progr| match progr {
+                                ParsingProgress::Progress(p) => *p,
+                                _ => 0.0,
+                            }),
+                        )
+                        .width(Percentage(90.0));
                     }
                     ParsingProgress::Unparsed => panic!("this match arm has to be filled earlier"),
                 })
@@ -80,6 +88,6 @@ pub fn widget_parser(cx: &mut Context) {
                 .padding_left(Pixels(20.0))
                 .padding_right(Pixels(20.0));
             }
-        }
-    })
+        },
+    )
 }

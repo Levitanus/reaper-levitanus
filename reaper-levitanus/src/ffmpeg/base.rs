@@ -1,6 +1,10 @@
 use std::io::{self, Write};
 use std::{error::Error, path::PathBuf, process::Command, time::Duration};
 
+use super::filters::{Filter, ScaleAspectRationOption};
+use super::nodes::{Node, NodeContent, Pin};
+use super::options::Opt;
+
 use fraction::Fraction;
 use itertools::Itertools;
 use rea_rs::{
@@ -9,35 +13,43 @@ use rea_rs::{
 };
 use serde::{Deserialize, Serialize};
 
-use vizia::prelude::{Data, Lens, LensValue, Wrapper};
-
-use super::filters::{Filter, ScaleAspectRationOption};
-use super::nodes::{Node, NodeContent, Pin};
-use super::options::{Encoder, Muxer, PixelFormat};
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Lens, Data)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RenderSettings {
-    pub muxer: Muxer,
-    pub encoder: Encoder,
-    pub fps: String,
-    pub pixel_format: PixelFormat,
+    pub muxer: String,
+    pub muxer_options: Vec<Opt>,
+    pub extension: String,
+    pub video_encoder: String,
+    pub video_encoder_options: Vec<Opt>,
+    pub audio_encoder: String,
+    pub audio_encoder_options: Vec<Opt>,
+    pub subtitle_encoder: String,
+    pub subtitle_encoder_options: Vec<Opt>,
+    pub fps: Fraction,
+    pub pixel_format: String,
     pub resolution: Resolution,
     pub pad_color: String,
 }
 impl Default for RenderSettings {
     fn default() -> Self {
         Self {
-            muxer: Muxer::default(),
-            encoder: Encoder::default(),
-            fps: "3000/1001".to_string(),
-            pixel_format: PixelFormat::default(),
+            muxer: "matroska".to_string(),
+            muxer_options: Vec::new(),
+            extension: "mkv".to_string(),
+            video_encoder: "libx264".to_string(),
+            video_encoder_options: Vec::new(),
+            audio_encoder: "vorbis".to_string(),
+            audio_encoder_options: Vec::new(),
+            subtitle_encoder: "ass".to_string(),
+            subtitle_encoder_options: Vec::new(),
+            fps: Fraction::new(3000_u64, 1001_u64),
+            pixel_format: "yuv420p".to_string(),
             resolution: Resolution::default(),
             pad_color: "DarkCyan".into(),
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Data)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Resolution {
     pub width: usize,
     pub height: usize,
@@ -168,7 +180,7 @@ pub struct TimeLine {
     _end: Position,
     resolution: Resolution,
     pad_color: String,
-    fps: String,
+    fps: Fraction,
     inputs: Vec<VideoInput>,
 }
 impl TimeLine {
