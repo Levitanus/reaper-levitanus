@@ -1,10 +1,13 @@
-use egui::{CollapsingHeader, ComboBox, Context, DragValue, Grid, RichText, ScrollArea, Ui};
+use egui::{
+    CollapsingHeader, ComboBox, Context, DragValue, Grid, Layout, RichText, ScrollArea, Ui,
+};
 use itertools::Itertools;
+use log::debug;
 
 use super::{Front, FrontMessage};
 use crate::{
     ffmpeg::{
-        options::{DurationUnit, Encoder, EncoderType, FfmpegColor, Opt, OptionParameter},
+        options::{DurationUnit, Encoder, EncoderType, FfmpegColor, Muxer, Opt, OptionParameter},
         parser::ParsingProgress,
         RenderSettings,
     },
@@ -26,46 +29,62 @@ impl Front {
                     self.state.render_settings = RenderSettings::default();
                     return;
                 }
-                // Muxer
+                let current_muxer = match self
+                    .muxers
+                    .iter()
+                    .find(|mux| mux.name == self.state.render_settings.muxer)
+                {
+                    Some(m) => m.clone(),
+                    None => {
+                        self.emit(FrontMessage::Error(format!(
+                            "didn't found muxer {}",
+                            self.state.render_settings.muxer
+                        )));
+                        return;
+                    }
+                };
+                let current_encoder = if let Some(enc) = self
+                    .encoders
+                    .iter()
+                    .find(|enc| enc.name == self.state.render_settings.video_encoder)
+                {
+                    enc.clone()
+                } else {
+                    return self.emit(FrontMessage::Error(
+                        LevitanusError::KeyError(
+                            "encoder".to_string(),
+                            self.state.render_settings.video_encoder.clone(),
+                        )
+                        .to_string(),
+                    ));
+                };
+
+                // GUI
                 ui.horizontal(|ui| {
-                    let current_muxer = match self
-                        .muxers
-                        .iter()
-                        .find(|mux| mux.name == self.state.render_settings.muxer)
-                    {
-                        Some(m) => m.clone(),
-                        None => {
-                            self.emit(FrontMessage::Error(format!(
-                                "didn't found muxer {}",
-                                self.state.render_settings.muxer
-                            )));
-                            return;
-                        }
-                    };
-                    self.widget_muxer(ui, current_muxer);
+                    self.widget_muxer(ui, &current_muxer);
+                    self.widget_encoder(ui, &current_encoder);
                 });
-                ui.horizontal(|ui| {
-                    let current_encoder = if let Some(enc) = self
-                        .encoders
-                        .iter()
-                        .find(|enc| enc.name == self.state.render_settings.video_encoder)
-                    {
-                        enc.clone()
-                    } else {
-                        return self.emit(FrontMessage::Error(
-                            LevitanusError::KeyError(
-                                "encoder".to_string(),
-                                self.state.render_settings.video_encoder.clone(),
-                            )
-                            .to_string(),
-                        ));
-                    };
-                    self.widget_encoder(ui, current_encoder);
+                CollapsingHeader::new("muxer options").show_unindented(ui, |ui| {
+                    Self::options_wrapper(
+                        ui,
+                        "muxer",
+                        &mut self.state.render_settings.muxer_options,
+                        current_muxer.options,
+                    );
+                });
+                CollapsingHeader::new("video encoder options").show_unindented(ui, |ui| {
+                    Self::options_wrapper(
+                        ui,
+                        "video encoder",
+                        &mut self.state.render_settings.video_encoder_options,
+                        current_encoder.options,
+                    );
                 });
             });
+        ui.label("bottom");
     }
 
-    fn widget_encoder(&mut self, ui: &mut Ui, current_encoder: Encoder) {
+    fn widget_encoder(&mut self, ui: &mut Ui, current_encoder: &Encoder) {
         ui.vertical(|ui| {
             ui.label(RichText::new("video encoder").strong());
             ComboBox::from_id_salt("encoder")
@@ -104,15 +123,9 @@ impl Front {
                     }
                 });
         });
-        Self::options_wrapper(
-            ui,
-            "encoder",
-            &mut self.state.render_settings.video_encoder_options,
-            current_encoder.options,
-        );
     }
 
-    fn widget_muxer(&mut self, ui: &mut Ui, current_muxer: crate::ffmpeg::options::Muxer) {
+    fn widget_muxer(&mut self, ui: &mut Ui, current_muxer: &Muxer) {
         ui.vertical(|ui| {
             ui.set_max_width(120.0);
             ui.label(RichText::new("muxer:").strong());
@@ -166,12 +179,6 @@ impl Front {
                     });
             }
         });
-        Self::options_wrapper(
-            ui,
-            "muxer",
-            &mut self.state.render_settings.muxer_options,
-            current_muxer.options,
-        );
     }
     fn options_wrapper(
         ui: &mut Ui,
@@ -199,12 +206,12 @@ impl Front {
     fn widget_options(ui: &mut Ui, id: &str, options: &mut Vec<Opt>) {
         ui.push_id(&id, |ui|{
             ScrollArea::vertical()
-            .max_height(200.0)
+            .max_height(300.0).auto_shrink([false,true])
             .min_scrolled_height(100.0)
             .show(ui, |ui| {
                 Grid::new("options")
-                    .min_col_width(50.0)
-                    .max_col_width(ui.available_width()/2.0)
+                    .min_col_width(100.0)
+                    .max_col_width(300.0)
                     .num_columns(3)
                     .striped(true)
                     .spacing((10.0, 10.0))

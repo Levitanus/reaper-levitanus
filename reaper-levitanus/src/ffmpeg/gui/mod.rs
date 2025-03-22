@@ -12,7 +12,7 @@ use std::{
 };
 
 use anyhow::Error;
-use egui::style::ScrollStyle;
+use egui::{style::ScrollStyle, ScrollArea, ViewportBuilder};
 use log::{debug, error};
 use rea_rs::{
     socket::{self, Broadcaster, SocketHandle},
@@ -270,7 +270,11 @@ impl eframe::App for Front {
         }
         egui::TopBottomPanel::bottom("footer").show(ctx, |ui| self.widget_parser(ctx, ui));
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.widget_render_settings(ctx, ui);
+            ScrollArea::both()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    self.widget_render_settings(ctx, ui);
+                });
         });
         ctx.request_repaint_after(Duration::from_millis(200));
     }
