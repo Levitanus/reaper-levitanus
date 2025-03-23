@@ -1,17 +1,29 @@
+use std::error::Error;
+use std::fmt::Display;
 use std::io::{self, Write};
-use std::{error::Error, path::PathBuf, process::Command, time::Duration};
+use std::{path::PathBuf, process::Command, time::Duration};
+
+use crate::LevitanusError;
 
 use super::filters::{Filter, ScaleAspectRationOption};
 use super::nodes::{Node, NodeContent, Pin};
-use super::options::Opt;
+use super::options::{FfmpegColor, Opt};
 
 use fraction::Fraction;
 use itertools::Itertools;
+use lazy_static::lazy_static;
+use log::debug;
 use rea_rs::{
     project_info::{BoundsMode, RenderMode},
     Position, Project, Reaper, SourceOffset,
 };
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+
+lazy_static! {
+    static ref RES_RE: Regex =
+        Regex::new(r"(?<width>\d+)x(?<height>\d+)").expect("can not compile opts regex");
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RenderSettings {
@@ -20,14 +32,14 @@ pub struct RenderSettings {
     pub extension: String,
     pub video_encoder: String,
     pub video_encoder_options: Vec<Opt>,
-    pub audio_encoder: String,
+    pub audio_encoder: Option<String>,
     pub audio_encoder_options: Vec<Opt>,
-    pub subtitle_encoder: String,
+    pub subtitle_encoder: Option<String>,
     pub subtitle_encoder_options: Vec<Opt>,
     pub fps: Fraction,
     pub pixel_format: String,
     pub resolution: Resolution,
-    pub pad_color: String,
+    pub pad_color: FfmpegColor,
 }
 impl Default for RenderSettings {
     fn default() -> Self {
@@ -37,14 +49,14 @@ impl Default for RenderSettings {
             extension: "mkv".to_string(),
             video_encoder: "libx264".to_string(),
             video_encoder_options: Vec::new(),
-            audio_encoder: "vorbis".to_string(),
+            audio_encoder: Some("aac".to_string()),
             audio_encoder_options: Vec::new(),
-            subtitle_encoder: "ass".to_string(),
+            subtitle_encoder: Some("ass".to_string()),
             subtitle_encoder_options: Vec::new(),
             fps: Fraction::new(3000_u64, 1001_u64),
             pixel_format: "yuv420p".to_string(),
             resolution: Resolution::default(),
-            pad_color: "DarkCyan".into(),
+            pad_color: FfmpegColor::new(0, 0xff),
         }
     }
 }
@@ -59,6 +71,50 @@ impl Default for Resolution {
         Self {
             width: 1920,
             height: 1080,
+        }
+    }
+}
+impl Display for Resolution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}x{}", self.width, self.height)
+    }
+}
+impl Resolution {
+    pub fn from_file(file: PathBuf) -> Result<Self, anyhow::Error> {
+        // ffprobe -v error -select_streams v -show_entries stream=width,height -of csv=p=0:s=x input.m4v
+        let mut ffprobe = Command::new("ffprobe");
+        ffprobe.args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0:s=x",
+            match file.to_str() {
+                Some(s) => s,
+                None => {
+                    return Err(LevitanusError::Unexpected(
+                        "Can not convert pathbuf to str".to_string(),
+                    )
+                    .into())
+                }
+            },
+        ]);
+        let output = ffprobe.output()?;
+        let out = std::str::from_utf8(&output.stdout)?;
+        debug!("filename: {:?}, ffprobe output: {}", file, out);
+        if let Some(cap) = RES_RE.captures(out) {
+            Ok(Self {
+                width: cap["width"].parse()?,
+                height: cap["height"].parse()?,
+            })
+        } else {
+            Err(
+                LevitanusError::Unexpected("Can not parse resolution from output".to_string())
+                    .into(),
+            )
         }
     }
 }
@@ -195,7 +251,7 @@ impl TimeLine {
             _start: start,
             _end: end,
             resolution: render_settings.resolution,
-            pad_color: render_settings.pad_color,
+            pad_color: render_settings.pad_color.ffmpeg_representation(),
             fps: render_settings.fps,
             inputs: Vec::new(),
         }

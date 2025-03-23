@@ -12,15 +12,16 @@ use std::{
 };
 
 use anyhow::Error;
-use egui::{style::ScrollStyle, ScrollArea, ViewportBuilder};
+use egui::{style::ScrollStyle, ScrollArea};
 use log::{debug, error};
 use rea_rs::{
     socket::{self, Broadcaster, SocketHandle},
-    ControlSurface, ExtState, Project, Reaper,
+    ControlSurface, ExtState, Project, Reaper, GUID,
 };
 use serde::{Deserialize, Serialize};
 
 use super::{
+    base::Resolution,
     options::{Encoder, Muxer, Opt},
     parser::{check_parsed_paths, encoders_path, muxers_path, parse_all, ParsingProgress},
     RenderSettings,
@@ -41,6 +42,8 @@ enum IppMessage {
     Init,
     State(State),
     Shutdown,
+    GetResolution,
+    SetResolution(Resolution),
 }
 
 #[derive(Debug)]
@@ -48,6 +51,7 @@ pub struct Backend {
     front: Child,
     sockets: Arc<Mutex<Vec<SocketHandle<IppMessage>>>>,
     broadcaster: Broadcaster,
+    last_video_item_guid: Option<GUID>,
 }
 impl Backend {
     pub fn new() -> anyhow::Result<Backend> {
@@ -58,10 +62,26 @@ impl Backend {
             front,
             sockets,
             broadcaster,
+            last_video_item_guid: None,
         })
     }
     fn ext_state(pr: &Project) -> ExtState<State, Project> {
         ExtState::new(EXT_SECTION, EXT_STATE_KEY, None, PERSIST, pr, None)
+    }
+    fn get_resolution(&self) -> Option<Resolution> {
+        if let Some(guid) = self.last_video_item_guid {
+            let rpr = Reaper::get();
+            let pr = rpr.current_project();
+            if let Some(item) = pr.iter_items().find(|it| it.guid() == guid) {
+                if let Some(source) = item.active_take().source() {
+                    let filename = source.filename();
+                    if let Ok(r) = Resolution::from_file(filename) {
+                        return Some(r);
+                    }
+                }
+            }
+        }
+        None
     }
 }
 impl Drop for Backend {
@@ -79,7 +99,19 @@ impl ControlSurface for Backend {
         };
 
         let rpr = Reaper::get();
-        let pr = rpr.current_project();
+        let mut pr = rpr.current_project();
+        if let Some(item) = pr.get_selected_item(0) {
+            if match self.last_video_item_guid {
+                None => true,
+                Some(guid) => item.guid() != guid,
+            } {
+                if let Some(source) = item.active_take().source() {
+                    if source.type_string() == "VIDEO" {
+                        self.last_video_item_guid = Some(item.guid())
+                    }
+                }
+            }
+        }
 
         let mut shutdown = false;
 
@@ -90,8 +122,20 @@ impl ControlSurface for Backend {
                     IppMessage::Init => client.send(IppMessage::State(
                         Self::ext_state(&pr).get()?.unwrap_or(State::default()),
                     ))?,
-                    IppMessage::State(msg) => Self::ext_state(&pr).set(msg),
+                    IppMessage::State(msg) => {
+                        let mut state = Self::ext_state(&pr);
+                        if state.get()?.unwrap_or(State::default()) != msg {
+                            state.set(msg);
+                            pr.mark_dirty();
+                        }
+                    }
                     IppMessage::Shutdown => shutdown = true,
+                    IppMessage::GetResolution => {
+                        if let Some(r) = self.get_resolution() {
+                            client.send(IppMessage::SetResolution(r))?
+                        }
+                    }
+                    IppMessage::SetResolution(_r) => error!("recieved resolution on back-end"),
                 }
             }
         }
@@ -115,7 +159,7 @@ enum StateMessage {
     MuxerOptions(Vec<Opt>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 struct State {
     json_path: PathBuf,
     render_settings: RenderSettings,
@@ -144,6 +188,8 @@ enum FrontMessage {
     Parse,
     Exit,
     Error(String),
+    AlternativeValue(String),
+    GetResolution,
 }
 
 #[derive(Debug)]
@@ -155,6 +201,7 @@ struct Front {
     msg_tx: Sender<FrontMessage>,
     parsing_progress: ParsingProgress,
     parser_channel: Option<Receiver<ParsingProgress>>,
+    alternative_value: String,
     muxers: Vec<Muxer>,
     encoders: Vec<Encoder>,
 }
@@ -180,6 +227,7 @@ impl Front {
             msg_rx,
             msg_tx,
             parsing_progress,
+            alternative_value: String::default(),
             parser_channel: None,
             muxers,
             encoders,
@@ -226,6 +274,8 @@ impl Front {
                 FrontMessage::Parse => self.parse(),
                 FrontMessage::Exit => self.exit_code = Some(ExitCode::Shutdown),
                 FrontMessage::Error(e) => return Err(Error::msg(e)),
+                FrontMessage::AlternativeValue(s) => self.alternative_value = s,
+                FrontMessage::GetResolution => self.socket.send(IppMessage::GetResolution)?,
             }
         }
         if let Some(rx) = &self.parser_channel {
@@ -244,6 +294,13 @@ impl Front {
                 IppMessage::Init => panic!("recieved init message during the loop."),
                 IppMessage::State(s) => self.state = s,
                 IppMessage::Shutdown => self.exit_code = Some(ExitCode::Shutdown),
+                IppMessage::GetResolution => {
+                    return Err(LevitanusError::ConnectionError(
+                        "recieved GetResolution message on front-end".to_string(),
+                    )
+                    .into())
+                }
+                IppMessage::SetResolution(r) => self.state.render_settings.resolution = r,
             }
         }
         Ok(())

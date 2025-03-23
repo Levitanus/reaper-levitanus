@@ -1,17 +1,15 @@
 use egui::{
-    CollapsingHeader, ComboBox, Context, DragValue, Grid, Layout, RichText, ScrollArea, Ui,
+    CollapsingHeader, Color32, ComboBox, Context, DragValue, Grid, RichText, ScrollArea, Separator,
+    Ui,
 };
 use itertools::Itertools;
-use log::debug;
 
 use super::{Front, FrontMessage};
-use crate::{
-    ffmpeg::{
-        options::{DurationUnit, Encoder, EncoderType, FfmpegColor, Muxer, Opt, OptionParameter},
-        parser::ParsingProgress,
-        RenderSettings,
-    },
-    LevitanusError,
+use crate::ffmpeg::{
+    base::Resolution,
+    options::{DurationUnit, Encoder, EncoderType, FfmpegColor, Muxer, Opt, OptionParameter},
+    parser::ParsingProgress,
+    RenderSettings,
 };
 
 impl Front {
@@ -36,34 +34,99 @@ impl Front {
                 {
                     Some(m) => m.clone(),
                     None => {
-                        self.emit(FrontMessage::Error(format!(
-                            "didn't found muxer {}",
-                            self.state.render_settings.muxer
-                        )));
+                        if let Some(s) = self.alternative_value(
+                            ctx,
+                            "muxer",
+                            &self.state.render_settings.muxer,
+                            self.muxers.iter().map(|mux| mux.name.clone()),
+                        ) {
+                            self.state.render_settings.muxer = s;
+                        }
                         return;
                     }
                 };
-                let current_encoder = if let Some(enc) = self
+                let current_video_encoder = match self
                     .encoders
                     .iter()
                     .find(|enc| enc.name == self.state.render_settings.video_encoder)
                 {
-                    enc.clone()
-                } else {
-                    return self.emit(FrontMessage::Error(
-                        LevitanusError::KeyError(
-                            "encoder".to_string(),
-                            self.state.render_settings.video_encoder.clone(),
-                        )
-                        .to_string(),
-                    ));
+                    Some(enc) => enc.clone(),
+                    None => {
+                        let result = self.alternative_value(
+                            ctx,
+                            "video encoder",
+                            &self.state.render_settings.video_encoder,
+                            self.encoders
+                                .iter()
+                                .filter(|enc| enc.encoder_type == EncoderType::Video)
+                                .map(|enc| enc.name.clone()),
+                        );
+                        if let Some(s) = result {
+                            self.state.render_settings.video_encoder = s;
+                        }
+                        return;
+                    }
                 };
+
+                let current_audio_encoder = match self.state.render_settings.audio_encoder.as_ref()
+                {
+                    None => None,
+                    Some(c) => match self.encoders.iter().find(|enc| enc.name == *c) {
+                        Some(enc) => Some(enc.clone()),
+                        None => {
+                            let result = self.alternative_value(
+                                ctx,
+                                "audio encoder",
+                                &c,
+                                self.encoders
+                                    .iter()
+                                    .filter(|enc| enc.encoder_type == EncoderType::Audio)
+                                    .map(|enc| enc.name.clone()),
+                            );
+                            if let Some(s) = result {
+                                self.state.render_settings.audio_encoder = Some(s);
+                            }
+                            return;
+                        }
+                    },
+                };
+
+                let current_subtitle_encoder =
+                    match self.state.render_settings.subtitle_encoder.as_ref() {
+                        None => None,
+                        Some(c) => match self.encoders.iter().find(|enc| enc.name == *c) {
+                            Some(enc) => Some(enc.clone()),
+                            None => {
+                                let result = self.alternative_value(
+                                    ctx,
+                                    "subtitle encoder",
+                                    &c,
+                                    self.encoders
+                                        .iter()
+                                        .filter(|enc| enc.encoder_type == EncoderType::Subtitle)
+                                        .map(|enc| enc.name.clone()),
+                                );
+                                if let Some(s) = result {
+                                    self.state.render_settings.subtitle_encoder = Some(s);
+                                }
+                                return;
+                            }
+                        },
+                    };
 
                 // GUI
                 ui.horizontal(|ui| {
                     self.widget_muxer(ui, &current_muxer);
-                    self.widget_encoder(ui, &current_encoder);
+                    self.widget_video_encoder(ui, &current_video_encoder);
+                    if let Some(enc) = &current_audio_encoder {
+                        self.widget_audio_encoder(ui, enc);
+                    }
+                    if let Some(enc) = &current_subtitle_encoder {
+                        self.widget_subtitle_encoder(ui, enc);
+                    }
                 });
+                ui.separator();
+                self.widget_small_render_settings(ui);
                 CollapsingHeader::new("muxer options").show_unindented(ui, |ui| {
                     Self::options_wrapper(
                         ui,
@@ -77,48 +140,75 @@ impl Front {
                         ui,
                         "video encoder",
                         &mut self.state.render_settings.video_encoder_options,
-                        current_encoder.options,
+                        current_video_encoder.options,
                     );
                 });
+                if let Some(enc) = &current_audio_encoder {
+                    CollapsingHeader::new("audio encoder options").show_unindented(ui, |ui| {
+                        Self::options_wrapper(
+                            ui,
+                            "audio encoder",
+                            &mut self.state.render_settings.audio_encoder_options,
+                            enc.options.clone(),
+                        );
+                    });
+                }
+                if let Some(enc) = &current_subtitle_encoder {
+                    CollapsingHeader::new("subtitle encoder options").show_unindented(ui, |ui| {
+                        Self::options_wrapper(
+                            ui,
+                            "subtitle encoder",
+                            &mut self.state.render_settings.subtitle_encoder_options,
+                            enc.options.clone(),
+                        );
+                    });
+                }
             });
         ui.label("bottom");
     }
 
-    fn widget_encoder(&mut self, ui: &mut Ui, current_encoder: &Encoder) {
-        ui.vertical(|ui| {
-            ui.label(RichText::new("video encoder").strong());
-            ComboBox::from_id_salt("encoder")
-                .selected_text(&self.state.render_settings.video_encoder)
+    fn widget_small_render_settings(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("resolution: ").strong());
+            ui.add(DragValue::new(
+                &mut self.state.render_settings.resolution.width,
+            ));
+            ui.label("x");
+            ui.add(DragValue::new(
+                &mut self.state.render_settings.resolution.height,
+            ));
+            ui.add_space(20.0);
+            ComboBox::from_id_salt("default resolutions")
+                .selected_text("built-in resolutions")
                 .show_ui(ui, |ui| {
-                    for enc in self
-                        .encoders
-                        .iter()
-                        .filter(|e| e.encoder_type == EncoderType::Video)
-                    {
+                    for (name, res) in built_in_resolutions() {
                         if ui
-                            .selectable_label(enc.name == current_encoder.name, &enc.name)
+                            .selectable_label(res == self.state.render_settings.resolution, name)
                             .clicked()
                         {
-                            self.state.render_settings.video_encoder = enc.name.clone();
-                            self.state.render_settings.video_encoder_options = Vec::new();
+                            self.state.render_settings.resolution = res.clone()
                         }
                     }
                 });
-            ui.label(RichText::new("pixel format").strong());
-            ComboBox::from_id_salt("pixel_format")
-                .selected_text(&self.state.render_settings.pixel_format)
+            if ui.button("get from current video item").clicked() {
+                self.emit(FrontMessage::GetResolution);
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("background color: ").strong());
+            let mut color: Color32 = self.state.render_settings.pad_color.clone().into();
+            if ui.color_edit_button_srgba(&mut color).changed() {
+                self.state.render_settings.pad_color = FfmpegColor::from(color);
+            };
+            ComboBox::from_id_salt("default colors")
+                .selected_text("built-in colors")
                 .show_ui(ui, |ui| {
-                    if let Some(px_fmts) = &current_encoder.supported_pixel_formats {
-                        for px_fmt in px_fmts {
-                            if ui
-                                .selectable_label(
-                                    px_fmt == &self.state.render_settings.pixel_format,
-                                    px_fmt,
-                                )
-                                .clicked()
-                            {
-                                self.state.render_settings.pixel_format = px_fmt.clone();
-                            }
+                    for (s, hex) in FfmpegColor::built_in_colors() {
+                        if ui
+                            .selectable_label(hex == self.state.render_settings.pad_color.color, s)
+                            .clicked()
+                        {
+                            self.state.render_settings.pad_color.color = hex;
                         }
                     }
                 });
@@ -126,8 +216,9 @@ impl Front {
     }
 
     fn widget_muxer(&mut self, ui: &mut Ui, current_muxer: &Muxer) {
+        // Self::frame(ui, |ui| {
         ui.vertical(|ui| {
-            ui.set_max_width(120.0);
+            ui.set_max_width(140.0);
             ui.label(RichText::new("muxer:").strong());
             ComboBox::from_id_salt("muxer")
                 .selected_text(current_muxer.name.clone())
@@ -149,14 +240,12 @@ impl Front {
                         {
                             self.state.render_settings.muxer = mux.name.clone();
                             if let Some(c) = &mux.video_codec {
-                                self.state.render_settings.video_encoder = c.clone()
+                                let c = c.replace("h264", "libx264").replace("flv1", "flv");
+                                self.state.render_settings.video_encoder = c;
                             }
-                            if let Some(c) = &mux.audio_codec {
-                                self.state.render_settings.audio_encoder = c.clone()
-                            }
-                            if let Some(c) = &mux.subtitle_codec {
-                                self.state.render_settings.subtitle_encoder = c.clone()
-                            }
+                            self.state.render_settings.audio_encoder = mux.audio_codec.clone();
+                            self.state.render_settings.subtitle_encoder =
+                                mux.subtitle_codec.clone();
                             if let Some(ext) = mux.extensions.as_ref() {
                                 self.state.render_settings.extension = ext[0].clone();
                             }
@@ -179,7 +268,135 @@ impl Front {
                     });
             }
         });
+        // });
     }
+
+    fn widget_video_encoder(&mut self, ui: &mut Ui, current_encoder: &Encoder) {
+        // Self::frame(ui, |ui| {
+        ui.vertical(|ui| {
+            ui.set_max_width(140.0);
+            ui.label(RichText::new("video encoder:").strong());
+            ComboBox::from_id_salt("video encoder")
+                .selected_text(&self.state.render_settings.video_encoder)
+                .show_ui(ui, |ui| {
+                    for enc in self
+                        .encoders
+                        .iter()
+                        .filter(|e| e.encoder_type == EncoderType::Video)
+                    {
+                        if ui
+                            .selectable_label(enc.name == current_encoder.name, &enc.name)
+                            .clicked()
+                        {
+                            self.state.render_settings.video_encoder = enc.name.clone();
+                            self.state.render_settings.video_encoder_options = Vec::new();
+                        }
+                    }
+                });
+            ui.menu_button("\u{2139} encoder info", |ui| {
+                ui.label(&current_encoder.description);
+                Self::encoder_flag(
+                    ui,
+                    "frame level multithreading",
+                    current_encoder.frame_level_multithreading,
+                    false,
+                );
+                Self::encoder_flag(
+                    ui,
+                    "slice level multithreading",
+                    current_encoder.slice_level_multithreading,
+                    false,
+                );
+                Self::encoder_flag(ui, "is experimental", current_encoder.is_experimenal, true);
+                Self::encoder_flag(
+                    ui,
+                    "supports draw horiz band",
+                    current_encoder.supports_draw_horiz_band,
+                    false,
+                );
+                Self::encoder_flag(
+                    ui,
+                    "supports direct rendering method 1",
+                    current_encoder.supports_direct_rendering_method_1,
+                    false,
+                );
+            });
+            ui.label(RichText::new("pixel format:").strong());
+            ComboBox::from_id_salt("pixel_format")
+                .selected_text(&self.state.render_settings.pixel_format)
+                .show_ui(ui, |ui| {
+                    if let Some(px_fmts) = &current_encoder.supported_pixel_formats {
+                        for px_fmt in px_fmts {
+                            if ui
+                                .selectable_label(
+                                    px_fmt == &self.state.render_settings.pixel_format,
+                                    px_fmt,
+                                )
+                                .clicked()
+                            {
+                                self.state.render_settings.pixel_format = px_fmt.clone();
+                            }
+                        }
+                    }
+                });
+        });
+        // });
+    }
+
+    fn widget_audio_encoder(&mut self, ui: &mut Ui, current_encoder: &Encoder) {
+        // Self::frame(ui, |ui| {
+        ui.vertical(|ui| {
+            ui.set_max_width(140.0);
+            ui.label(RichText::new("audio encoder:").strong());
+            ComboBox::from_id_salt("audio encoder")
+                .selected_text(&current_encoder.name)
+                .show_ui(ui, |ui| {
+                    for enc in self
+                        .encoders
+                        .iter()
+                        .filter(|e| e.encoder_type == EncoderType::Audio)
+                    {
+                        if ui
+                            .selectable_label(enc.name == current_encoder.name, &enc.name)
+                            .clicked()
+                        {
+                            self.state.render_settings.audio_encoder = Some(enc.name.clone());
+                            self.state.render_settings.audio_encoder_options = Vec::new();
+                        }
+                    }
+                });
+            ui.label(&current_encoder.description);
+        });
+        // });
+    }
+
+    fn widget_subtitle_encoder(&mut self, ui: &mut Ui, current_encoder: &Encoder) {
+        // Self::frame(ui, |ui| {
+        ui.vertical(|ui| {
+            ui.set_max_width(140.0);
+            ui.label(RichText::new("subtitle encoder:").strong());
+            ComboBox::from_id_salt("subtitle encoder")
+                .selected_text(&current_encoder.name)
+                .show_ui(ui, |ui| {
+                    for enc in self
+                        .encoders
+                        .iter()
+                        .filter(|e| e.encoder_type == EncoderType::Subtitle)
+                    {
+                        if ui
+                            .selectable_label(enc.name == current_encoder.name, &enc.name)
+                            .clicked()
+                        {
+                            self.state.render_settings.subtitle_encoder = Some(enc.name.clone());
+                            self.state.render_settings.subtitle_encoder_options = Vec::new();
+                        }
+                    }
+                });
+            ui.label(&current_encoder.description);
+        });
+        // });
+    }
+
     fn options_wrapper(
         ui: &mut Ui,
         id: &str,
@@ -207,7 +424,7 @@ impl Front {
         ui.push_id(&id, |ui|{
             ScrollArea::vertical()
             .max_height(300.0).auto_shrink([false,true])
-            .min_scrolled_height(100.0)
+            // .min_scrolled_height(100.0)
             .show(ui, |ui| {
                 Grid::new("options")
                     .min_col_width(100.0)
@@ -619,4 +836,380 @@ impl Front {
             });
         });
     }
+}
+
+fn built_in_resolutions() -> Vec<(&'static str, Resolution)> {
+    vec![
+        (
+            "ntsc",
+            Resolution {
+                width: 720,
+                height: 480,
+            },
+        ),
+        (
+            "pal",
+            Resolution {
+                width: 720,
+                height: 576,
+            },
+        ),
+        (
+            "qntsc",
+            Resolution {
+                width: 352,
+                height: 240,
+            },
+        ),
+        (
+            "qpal",
+            Resolution {
+                width: 352,
+                height: 288,
+            },
+        ),
+        (
+            "sntsc",
+            Resolution {
+                width: 640,
+                height: 480,
+            },
+        ),
+        (
+            "spal",
+            Resolution {
+                width: 768,
+                height: 576,
+            },
+        ),
+        (
+            "film",
+            Resolution {
+                width: 352,
+                height: 240,
+            },
+        ),
+        (
+            "ntsc-film",
+            Resolution {
+                width: 352,
+                height: 240,
+            },
+        ),
+        (
+            "sqcif",
+            Resolution {
+                width: 128,
+                height: 96,
+            },
+        ),
+        (
+            "qcif",
+            Resolution {
+                width: 176,
+                height: 144,
+            },
+        ),
+        (
+            "cif",
+            Resolution {
+                width: 352,
+                height: 288,
+            },
+        ),
+        (
+            "4cif",
+            Resolution {
+                width: 704,
+                height: 576,
+            },
+        ),
+        (
+            "16cif",
+            Resolution {
+                width: 1408,
+                height: 1152,
+            },
+        ),
+        (
+            "qqvga",
+            Resolution {
+                width: 160,
+                height: 120,
+            },
+        ),
+        (
+            "qvga",
+            Resolution {
+                width: 320,
+                height: 240,
+            },
+        ),
+        (
+            "vga",
+            Resolution {
+                width: 640,
+                height: 480,
+            },
+        ),
+        (
+            "svga",
+            Resolution {
+                width: 800,
+                height: 600,
+            },
+        ),
+        (
+            "xga",
+            Resolution {
+                width: 1024,
+                height: 768,
+            },
+        ),
+        (
+            "uxga",
+            Resolution {
+                width: 1600,
+                height: 1200,
+            },
+        ),
+        (
+            "qxga",
+            Resolution {
+                width: 2048,
+                height: 1536,
+            },
+        ),
+        (
+            "sxga",
+            Resolution {
+                width: 1280,
+                height: 1024,
+            },
+        ),
+        (
+            "qsxga",
+            Resolution {
+                width: 2560,
+                height: 2048,
+            },
+        ),
+        (
+            "hsxga",
+            Resolution {
+                width: 5120,
+                height: 4096,
+            },
+        ),
+        (
+            "wvga",
+            Resolution {
+                width: 852,
+                height: 480,
+            },
+        ),
+        (
+            "wxga",
+            Resolution {
+                width: 1366,
+                height: 768,
+            },
+        ),
+        (
+            "wsxga",
+            Resolution {
+                width: 1600,
+                height: 1024,
+            },
+        ),
+        (
+            "wuxga",
+            Resolution {
+                width: 1920,
+                height: 1200,
+            },
+        ),
+        (
+            "woxga",
+            Resolution {
+                width: 2560,
+                height: 1600,
+            },
+        ),
+        (
+            "wqsxga",
+            Resolution {
+                width: 3200,
+                height: 2048,
+            },
+        ),
+        (
+            "wquxga",
+            Resolution {
+                width: 3840,
+                height: 2400,
+            },
+        ),
+        (
+            "whsxga",
+            Resolution {
+                width: 6400,
+                height: 4096,
+            },
+        ),
+        (
+            "whuxga",
+            Resolution {
+                width: 7680,
+                height: 4800,
+            },
+        ),
+        (
+            "cga",
+            Resolution {
+                width: 320,
+                height: 200,
+            },
+        ),
+        (
+            "ega",
+            Resolution {
+                width: 640,
+                height: 350,
+            },
+        ),
+        (
+            "hd480",
+            Resolution {
+                width: 852,
+                height: 480,
+            },
+        ),
+        (
+            "hd720",
+            Resolution {
+                width: 1280,
+                height: 720,
+            },
+        ),
+        (
+            "hd1080",
+            Resolution {
+                width: 1920,
+                height: 1080,
+            },
+        ),
+        (
+            "2k",
+            Resolution {
+                width: 2048,
+                height: 1080,
+            },
+        ),
+        (
+            "2kflat",
+            Resolution {
+                width: 1998,
+                height: 1080,
+            },
+        ),
+        (
+            "2kscope",
+            Resolution {
+                width: 2048,
+                height: 858,
+            },
+        ),
+        (
+            "4k",
+            Resolution {
+                width: 4096,
+                height: 2160,
+            },
+        ),
+        (
+            "4kflat",
+            Resolution {
+                width: 3996,
+                height: 2160,
+            },
+        ),
+        (
+            "4kscope",
+            Resolution {
+                width: 4096,
+                height: 1716,
+            },
+        ),
+        (
+            "nhd",
+            Resolution {
+                width: 640,
+                height: 360,
+            },
+        ),
+        (
+            "hqvga",
+            Resolution {
+                width: 240,
+                height: 160,
+            },
+        ),
+        (
+            "wqvga",
+            Resolution {
+                width: 400,
+                height: 240,
+            },
+        ),
+        (
+            "fwqvga",
+            Resolution {
+                width: 432,
+                height: 240,
+            },
+        ),
+        (
+            "hvga",
+            Resolution {
+                width: 480,
+                height: 320,
+            },
+        ),
+        (
+            "qhd",
+            Resolution {
+                width: 960,
+                height: 540,
+            },
+        ),
+        (
+            "2kdci",
+            Resolution {
+                width: 2048,
+                height: 1080,
+            },
+        ),
+        (
+            "4kdci",
+            Resolution {
+                width: 4096,
+                height: 2160,
+            },
+        ),
+        (
+            "uhd2160",
+            Resolution {
+                width: 3840,
+                height: 2160,
+            },
+        ),
+        (
+            "uhd4320",
+            Resolution {
+                width: 7680,
+                height: 4320,
+            },
+        ),
+    ]
 }
