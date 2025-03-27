@@ -1,6 +1,5 @@
 use egui::{
-    CollapsingHeader, Color32, ComboBox, Context, DragValue, Grid, RichText, ScrollArea, Separator,
-    Ui,
+    CollapsingHeader, Color32, ComboBox, Context, DragValue, Grid, RichText, ScrollArea, Ui,
 };
 use itertools::Itertools;
 

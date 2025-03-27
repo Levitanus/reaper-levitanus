@@ -132,6 +132,13 @@ impl Timestamp for Duration {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderSequence {
+    input: Vec<String>,
+    filter: Vec<String>,
+    output: Vec<String>,
+}
+
 #[derive(Debug)]
 pub struct Render {
     pub render_settings: RenderSettings,
@@ -143,8 +150,7 @@ impl Render {
         }
         Ok(())
     }
-    fn render_timeline(&self, timeline: TimeLine) -> Result<(), Box<dyn Error>> {
-        println!("rendering timleline:\n{:#?}", timeline);
+    pub fn get_render_job(&self, timeline: TimeLine) -> Result<Command, LevitanusError> {
         let (input_nodes, filter_nodes) = timeline.get_nodes()?;
         println!(
             "inputs are:\n{:#?}\n filters are:\n{:#?}",
@@ -184,6 +190,11 @@ impl Render {
         ffmpeg.arg("-y");
         ffmpeg.args(main_seq);
         println!("{:#?}", ffmpeg.get_args());
+        Ok(ffmpeg)
+    }
+    fn render_timeline(&self, timeline: TimeLine) -> anyhow::Result<()> {
+        println!("rendering timleline:\n{:#?}", timeline);
+        let mut ffmpeg = self.get_render_job(timeline)?;
 
         let output = ffmpeg.output()?;
         // println!("{:?}", out.status);
@@ -193,7 +204,7 @@ impl Render {
 
         Ok(())
     }
-    fn render_node(&self, node: &Node) -> Result<Vec<String>, String> {
+    fn render_node(&self, node: &Node) -> Result<Vec<String>, LevitanusError> {
         let mut node_seq = Vec::new();
         match &node.content {
             NodeContent::Input {
@@ -216,7 +227,9 @@ impl Render {
                 for input in &node.inputs {
                     node_seq.push(format!(
                         "[{}]",
-                        input.get_target().ok_or("No input in sink")?
+                        input
+                            .get_target()
+                            .ok_or(LevitanusError::Render("No input in sink".to_string()))?
                     ))
                 }
                 node_seq.push(filter.get_render_string());
@@ -229,7 +242,7 @@ impl Render {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeLine {
     outfile: PathBuf,
     _start: Position,
@@ -335,7 +348,7 @@ impl TimeLine {
         }
         self.inputs.push(input);
     }
-    fn get_nodes(&self) -> Result<(Vec<Node>, Vec<Node>), String> {
+    fn get_nodes(&self) -> Result<(Vec<Node>, Vec<Node>), LevitanusError> {
         let mut nodes = Vec::new();
         let mut input_nodes = Vec::new();
         let mut filter_nodes: Vec<Vec<Node>> = Vec::new();
@@ -541,7 +554,7 @@ impl TimeLine {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct VideoInput {
     file: PathBuf,
     timeline_position: Position,
@@ -606,9 +619,7 @@ impl VideoInput {
     }
 }
 
-pub fn build_render_timelines(
-    render_settings: &RenderSettings,
-) -> Result<Vec<TimeLine>, Box<dyn Error>> {
+pub fn build_render_timelines(render_settings: &RenderSettings) -> anyhow::Result<Vec<TimeLine>> {
     let render_regions = get_render_regions()?;
     let timelines = render_regions
         .into_iter()
@@ -693,19 +704,20 @@ pub struct RenderRegion {
     file: PathBuf,
 }
 
-fn get_render_targets(pr: &Project, idx: usize) -> Result<PathBuf, Box<dyn Error>> {
-    let string = match pr.get_render_targets()?.get(idx) {
-        Some(file) => file.clone(),
-        None => {
-            return Err("Can not estimate region output filename."
-                .to_string()
-                .into())
-        }
-    };
+fn get_render_targets(pr: &Project, idx: usize) -> anyhow::Result<PathBuf> {
+    let string = pr
+        .get_render_targets()
+        .map_err(|e| LevitanusError::Reaper(e.to_string()))?
+        .get(idx)
+        .ok_or(LevitanusError::Render(
+            "Can not estimate region output filename.".to_string(),
+        ))?
+        .clone();
+
     Ok(PathBuf::from(string))
 }
 
-fn get_render_regions() -> Result<Vec<RenderRegion>, Box<dyn Error>> {
+fn get_render_regions() -> anyhow::Result<Vec<RenderRegion>> {
     let rpr = Reaper::get();
     let pr = rpr.current_project();
     let settings = pr.get_render_settings();
@@ -748,11 +760,18 @@ fn get_render_regions() -> Result<Vec<RenderRegion>, Box<dyn Error>> {
                 }
                 Ok(bounds)
             }
-            BoundsMode::SelectedItems => Err("No support for rendering selected items.".into()),
-            BoundsMode::SelectedRegions => {
-                Err("No support for render Matrix (selected regions)".into())
-            }
+            BoundsMode::SelectedItems => Err(LevitanusError::Render(
+                "No support for rendering selected items.".to_string(),
+            )
+            .into()),
+            BoundsMode::SelectedRegions => Err(LevitanusError::Render(
+                "No support for render Matrix (selected regions)".to_string(),
+            )
+            .into()),
         },
-        _ => Err("currently, supports just render with MasterMix in render settings".into()),
+        _ => Err(LevitanusError::Render(
+            "currently, supports just render with MasterMix in render settings".to_string(),
+        )
+        .into()),
     }
 }

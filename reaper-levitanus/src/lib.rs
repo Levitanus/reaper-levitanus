@@ -18,4 +18,8 @@ pub enum LevitanusError {
     Enum(String),
     #[error("KeyError: {0} has no key {1}")]
     KeyError(String, String),
+    #[error("ReaperError, original message: {0}")]
+    Reaper(String),
+    #[error("ReaperError, original message: {0}")]
+    Render(String),
 }

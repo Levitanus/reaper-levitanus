@@ -1,13 +1,69 @@
+use std::{path::PathBuf, sync::mpsc::Receiver};
+
 use super::{Front, FrontMessage};
-use crate::ffmpeg::parser::ParsingProgress;
+use crate::{ffmpeg::parser::ParsingProgress, LevitanusError};
 use egui::{
-    text::LayoutJob, Color32, ComboBox, Context, FontId, Frame, Id, InnerResponse, Layout, Modal,
-    ModalResponse, ProgressBar, Response, RichText, Stroke, TextFormat, Ui,
+    text::LayoutJob, Area, Color32, ComboBox, Context, FontId, Frame, Id, InnerResponse, Layout,
+    Modal, ProgressBar, Response, RichText, Stroke, TextFormat, Ui, Window,
 };
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug)]
+pub struct RenderJob {
+    filename: PathBuf,
+    progress: RenderProgress,
+    reciever: Option<Receiver<RenderProgress>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RenderProgress {
+    Progress(f32),
+    Result(Result<(), String>),
+}
 
 impl Front {
+    pub(crate) fn widget_render(&mut self, ctx: &Context, ui: &mut Ui) {
+        Self::frame(ui, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button("render").clicked() {
+                    self.emit(FrontMessage::Render);
+                }
+                ui.checkbox(&mut self.state.parallel_render, "render files parallel");
+            });
+            if self.render_jobs.len() > 0 {
+                Modal::new(Id::new("render")).show(ctx, |ui| {
+                    ui.with_layout(
+                        Layout::left_to_right(egui::Align::Min).with_main_wrap(true),
+                        |ui| {
+                            for job in self.render_jobs.iter() {
+                                let (progress, status, error) = match &job.progress {
+                                    RenderProgress::Progress(p) => (*p, "rendering", None),
+                                    RenderProgress::Result(r) => match r {
+                                        Ok(()) => (1.0, "rendered", None),
+                                        Err(e) => (-1.0, "error", Some(e)),
+                                    },
+                                };
+                                ui.label(job.filename.to_string_lossy());
+                                ui.label(status);
+                                match error {
+                                    None => {
+                                        ui.add(ProgressBar::new(progress));
+                                    }
+                                    Some(e) => {
+                                        if ui.button("show error").clicked() {
+                                            Window::new("render error").show(ctx, |ui| ui.label(e));
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                    );
+                });
+            }
+        });
+    }
     pub(crate) fn widget_parser(&self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        ui.with_layout(Layout::top_down(egui::Align::Center), |ui| {
+        Self::frame(ui, |ui| {
             match &self.parsing_progress {
                 ParsingProgress::Unparsed => {
                     Modal::new(Id::new("parse yes no")).show(ctx, |ui| {

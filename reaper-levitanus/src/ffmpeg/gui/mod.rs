@@ -19,14 +19,15 @@ use rea_rs::{
     ControlSurface, ExtState, Project, Reaper, GUID,
 };
 use serde::{Deserialize, Serialize};
+use small_widgets::RenderJob;
 
 use super::{
-    base::Resolution,
+    base::{Resolution, TimeLine},
     options::{Encoder, Muxer, Opt},
     parser::{check_parsed_paths, encoders_path, muxers_path, parse_all, ParsingProgress},
     RenderSettings,
 };
-use crate::LevitanusError;
+use crate::{ffmpeg::base::build_render_timelines, LevitanusError};
 
 mod render_settings;
 mod small_widgets;
@@ -44,6 +45,8 @@ enum IppMessage {
     Shutdown,
     GetResolution,
     SetResolution(Resolution),
+    BuildRenderSequence(RenderSettings),
+    RenderSequence(Vec<TimeLine>),
 }
 
 #[derive(Debug)]
@@ -136,6 +139,10 @@ impl ControlSurface for Backend {
                         }
                     }
                     IppMessage::SetResolution(_r) => error!("recieved resolution on back-end"),
+                    IppMessage::BuildRenderSequence(s) => {
+                        client.send(IppMessage::RenderSequence(build_render_timelines(&s)?))?
+                    }
+                    IppMessage::RenderSequence(_) => error!("recieved render_sequence on back-end"),
                 }
             }
         }
@@ -163,6 +170,7 @@ enum StateMessage {
 struct State {
     json_path: PathBuf,
     render_settings: RenderSettings,
+    parallel_render: bool,
 }
 impl Default for State {
     fn default() -> Self {
@@ -173,6 +181,7 @@ impl Default for State {
         State {
             json_path,
             render_settings: RenderSettings::default(),
+            parallel_render: true,
         }
     }
 }
@@ -190,6 +199,7 @@ enum FrontMessage {
     Error(String),
     AlternativeValue(String),
     GetResolution,
+    Render,
 }
 
 #[derive(Debug)]
@@ -201,6 +211,7 @@ struct Front {
     msg_tx: Sender<FrontMessage>,
     parsing_progress: ParsingProgress,
     parser_channel: Option<Receiver<ParsingProgress>>,
+    render_jobs: Vec<RenderJob>,
     alternative_value: String,
     muxers: Vec<Muxer>,
     encoders: Vec<Encoder>,
@@ -227,8 +238,9 @@ impl Front {
             msg_rx,
             msg_tx,
             parsing_progress,
-            alternative_value: String::default(),
             parser_channel: None,
+            render_jobs: Vec::new(),
+            alternative_value: String::default(),
             muxers,
             encoders,
         }
@@ -276,6 +288,9 @@ impl Front {
                 FrontMessage::Error(e) => return Err(Error::msg(e)),
                 FrontMessage::AlternativeValue(s) => self.alternative_value = s,
                 FrontMessage::GetResolution => self.socket.send(IppMessage::GetResolution)?,
+                FrontMessage::Render => self.socket.send(IppMessage::BuildRenderSequence(
+                    self.state.render_settings.clone(),
+                ))?,
             }
         }
         if let Some(rx) = &self.parser_channel {
@@ -289,18 +304,19 @@ impl Front {
                 }
             }
         }
-        for msg in self.socket.try_iter() {
+        for msg in self.socket.try_iter().collect::<Vec<IppMessage>>() {
             match msg {
                 IppMessage::Init => panic!("recieved init message during the loop."),
                 IppMessage::State(s) => self.state = s,
                 IppMessage::Shutdown => self.exit_code = Some(ExitCode::Shutdown),
                 IppMessage::GetResolution => {
-                    return Err(LevitanusError::ConnectionError(
-                        "recieved GetResolution message on front-end".to_string(),
-                    )
-                    .into())
+                    error!("recieved GetResolution message on front-end")
                 }
                 IppMessage::SetResolution(r) => self.state.render_settings.resolution = r,
+                IppMessage::BuildRenderSequence(_) => {
+                    error!("recieved BuildRenderSequence message on front-end")
+                }
+                IppMessage::RenderSequence(s) => self.render(s)?,
             }
         }
         Ok(())
@@ -309,6 +325,9 @@ impl Front {
         self.msg_tx
             .send(message)
             .expect("front message channel is corrupted");
+    }
+    fn render(&mut self, render_queue: Vec<TimeLine>) -> anyhow::Result<()> {
+        Ok(())
     }
 }
 impl eframe::App for Front {
@@ -325,12 +344,18 @@ impl eframe::App for Front {
                 }
             }
         }
-        egui::TopBottomPanel::bottom("footer").show(ctx, |ui| self.widget_parser(ctx, ui));
+        egui::TopBottomPanel::bottom("footer").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                self.widget_parser(ctx, ui);
+                self.widget_render(ctx, ui);
+            });
+        });
         egui::CentralPanel::default().show(ctx, |ui| {
             ScrollArea::both()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     self.widget_render_settings(ctx, ui);
+                    // self.widget_render(ctx, ui);
                 });
         });
         ctx.request_repaint_after(Duration::from_millis(200));
