@@ -110,6 +110,12 @@ impl Drop for Backend {
 impl Backend {}
 impl ControlSurface for Backend {
     fn run(&mut self) -> anyhow::Result<()> {
+        if self.sockets.is_poisoned() {
+            self.stop();
+            if let Err(e) = self.sockets.lock() {
+                return Err(LevitanusError::Poison(e.to_string()).into());
+            }
+        }
         let mut clients = match self.sockets.lock() {
             Ok(m) => m,
             Err(e) => return Err(LevitanusError::Poison(e.to_string()).into()),
