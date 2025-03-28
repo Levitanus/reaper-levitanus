@@ -1,6 +1,7 @@
 use std::{num::ParseIntError, time::Duration};
 
 use egui::Color32;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -138,6 +139,83 @@ impl OptionParameter {
                 selected_idx,
             } => selected_idx.is_some(),
             Self::Flags { items: _, selected } => selected.is_some(),
+        }
+    }
+    pub fn ffmpeg_representation(&self) -> Option<String> {
+        match self {
+            Self::Int(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::String(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::Float(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::Bool(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::Binary(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::Rational(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::Duration(n) => match n {
+                Some(n) => match n {
+                    DurationUnit::Seconds(s) => Some(format!("{}", s)),
+                    DurationUnit::Milliseconds(ms) => Some(format!("{}ms", ms)),
+                    DurationUnit::Microseconds(us) => Some(format!("{}us", us)),
+                    DurationUnit::Timestamp {
+                        hours,
+                        minutes,
+                        seconds,
+                    } => Some(format!("{}:{}:{}", hours, minutes, seconds)),
+                },
+                None => None,
+            },
+            Self::Dictionary(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::Color(n) => match n {
+                Some(n) => Some(format!("{}", n.ffmpeg_representation())),
+                None => None,
+            },
+            Self::ImageSize(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::FrameRate(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::Enum {
+                items,
+                selected_idx,
+            } => match selected_idx {
+                Some(n) => Some(format!("{}", items[*n])),
+                None => None,
+            },
+            Self::Flags { items, selected } => match selected {
+                Some(v) => Some(
+                    items
+                        .iter()
+                        .zip(v)
+                        .map(|(it, sel)| match sel {
+                            true => format!("+{}", it),
+                            false => format!("-{}", it),
+                        })
+                        .join(""),
+                ),
+                None => None,
+            },
         }
     }
 }

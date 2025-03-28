@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::BufReader,
+    io::{BufRead, BufReader},
     path::PathBuf,
     process::{Child, Command},
     sync::{
@@ -13,16 +13,17 @@ use std::{
 
 use anyhow::Error;
 use egui::{style::ScrollStyle, ScrollArea};
+use fraction::Fraction;
 use log::{debug, error};
 use rea_rs::{
     socket::{self, Broadcaster, SocketHandle},
     ControlSurface, ExtState, Project, Reaper, GUID,
 };
+use render_widget::RenderJob;
 use serde::{Deserialize, Serialize};
-use small_widgets::RenderJob;
 
 use super::{
-    base::{Resolution, TimeLine},
+    base::{framerate_from_video, Resolution, TimeLine},
     options::{Encoder, Muxer, Opt},
     parser::{check_parsed_paths, encoders_path, muxers_path, parse_all, ParsingProgress},
     RenderSettings,
@@ -30,6 +31,7 @@ use super::{
 use crate::{ffmpeg::base::build_render_timelines, LevitanusError};
 
 mod render_settings;
+mod render_widget;
 mod small_widgets;
 
 static PERSIST: bool = true;
@@ -43,8 +45,8 @@ enum IppMessage {
     Init,
     State(State),
     Shutdown,
-    GetResolution,
-    SetResolution(Resolution),
+    GetCurrentVideoItem,
+    SetCurrentVideoItem(PathBuf),
     BuildRenderSequence(RenderSettings),
     RenderSequence(Vec<TimeLine>),
 }
@@ -71,14 +73,26 @@ impl Backend {
     fn ext_state(pr: &Project) -> ExtState<State, Project> {
         ExtState::new(EXT_SECTION, EXT_STATE_KEY, None, PERSIST, pr, None)
     }
-    fn get_resolution(&self) -> Option<Resolution> {
+    fn get_current_video_item(&self) -> Option<PathBuf> {
+        if let Some(guid) = self.last_video_item_guid {
+            let rpr = Reaper::get();
+            let pr = rpr.current_project();
+            if let Some(item) = pr.iter_items().find(|it| it.guid() == guid) {
+                if let Some(source) = item.active_take().source() {
+                    return Some(source.filename());
+                }
+            }
+        }
+        None
+    }
+    fn get_framerate(&self) -> Option<Fraction> {
         if let Some(guid) = self.last_video_item_guid {
             let rpr = Reaper::get();
             let pr = rpr.current_project();
             if let Some(item) = pr.iter_items().find(|it| it.guid() == guid) {
                 if let Some(source) = item.active_take().source() {
                     let filename = source.filename();
-                    if let Ok(r) = Resolution::from_file(filename) {
+                    if let Ok(r) = framerate_from_video(filename) {
                         return Some(r);
                     }
                 }
@@ -133,12 +147,12 @@ impl ControlSurface for Backend {
                         }
                     }
                     IppMessage::Shutdown => shutdown = true,
-                    IppMessage::GetResolution => {
-                        if let Some(r) = self.get_resolution() {
-                            client.send(IppMessage::SetResolution(r))?
+                    IppMessage::GetCurrentVideoItem => {
+                        if let Some(file) = self.get_current_video_item() {
+                            client.send(IppMessage::SetCurrentVideoItem(file))?
                         }
                     }
-                    IppMessage::SetResolution(_r) => error!("recieved resolution on back-end"),
+                    IppMessage::SetCurrentVideoItem(_) => error!("recieved current video item"),
                     IppMessage::BuildRenderSequence(s) => {
                         client.send(IppMessage::RenderSequence(build_render_timelines(&s)?))?
                     }
@@ -199,6 +213,7 @@ enum FrontMessage {
     Error(String),
     AlternativeValue(String),
     GetResolution,
+    GetFrameRate,
     Render,
 }
 
@@ -287,7 +302,22 @@ impl Front {
                 FrontMessage::Exit => self.exit_code = Some(ExitCode::Shutdown),
                 FrontMessage::Error(e) => return Err(Error::msg(e)),
                 FrontMessage::AlternativeValue(s) => self.alternative_value = s,
-                FrontMessage::GetResolution => self.socket.send(IppMessage::GetResolution)?,
+                FrontMessage::GetFrameRate => {
+                    self.socket.send(IppMessage::GetCurrentVideoItem)?;
+                    if let Ok(file) = self.socket.recv() {
+                        if let IppMessage::SetCurrentVideoItem(file) = file {
+                            self.state.render_settings.fps = framerate_from_video(file)?;
+                        }
+                    }
+                }
+                FrontMessage::GetResolution => {
+                    self.socket.send(IppMessage::GetCurrentVideoItem)?;
+                    if let Ok(file) = self.socket.recv() {
+                        if let IppMessage::SetCurrentVideoItem(file) = file {
+                            self.state.render_settings.resolution = Resolution::from_file(file)?;
+                        }
+                    }
+                }
                 FrontMessage::Render => self.socket.send(IppMessage::BuildRenderSequence(
                     self.state.render_settings.clone(),
                 ))?,
@@ -309,15 +339,20 @@ impl Front {
                 IppMessage::Init => panic!("recieved init message during the loop."),
                 IppMessage::State(s) => self.state = s,
                 IppMessage::Shutdown => self.exit_code = Some(ExitCode::Shutdown),
-                IppMessage::GetResolution => {
-                    error!("recieved GetResolution message on front-end")
-                }
-                IppMessage::SetResolution(r) => self.state.render_settings.resolution = r,
                 IppMessage::BuildRenderSequence(_) => {
                     error!("recieved BuildRenderSequence message on front-end")
                 }
                 IppMessage::RenderSequence(s) => self.render(s)?,
+                IppMessage::GetCurrentVideoItem => {
+                    error!("recieved GetCurrentVideoItem mesge on font-end")
+                }
+                IppMessage::SetCurrentVideoItem(file) => {
+                    error!("recieved SetCurrentVideoItem({:?}) in polling", file)
+                }
             }
+        }
+        for job in self.render_jobs.iter_mut() {
+            job.poll()?;
         }
         Ok(())
     }
@@ -325,9 +360,6 @@ impl Front {
         self.msg_tx
             .send(message)
             .expect("front message channel is corrupted");
-    }
-    fn render(&mut self, render_queue: Vec<TimeLine>) -> anyhow::Result<()> {
-        Ok(())
     }
 }
 impl eframe::App for Front {

@@ -24,6 +24,10 @@ lazy_static! {
     static ref RES_RE: Regex =
         Regex::new(r"(?<width>\d+)x(?<height>\d+)").expect("can not compile opts regex");
 }
+lazy_static! {
+    static ref FPS_RE: Regex =
+        Regex::new(r"(?<num>\d+)/(?<denom>\d+)").expect("can not compile opts regex");
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RenderSettings {
@@ -53,7 +57,7 @@ impl Default for RenderSettings {
             audio_encoder_options: Vec::new(),
             subtitle_encoder: Some("ass".to_string()),
             subtitle_encoder_options: Vec::new(),
-            fps: Fraction::new(3000_u64, 1001_u64),
+            fps: Fraction::new(30000_u64, 1001_u64),
             pixel_format: "yuv420p".to_string(),
             resolution: Resolution::default(),
             pad_color: FfmpegColor::new(0, 0xff),
@@ -119,6 +123,39 @@ impl Resolution {
     }
 }
 
+pub fn framerate_from_video(file: PathBuf) -> Result<Fraction, anyhow::Error> {
+    let mut ffprobe = Command::new("ffprobe");
+    ffprobe.args([
+        "-v",
+        "error",
+        "-select_streams",
+        "v",
+        "-show_entries",
+        "stream=r_frame_rate",
+        "-of",
+        "csv=p=0:s=x",
+        match file.to_str() {
+            Some(s) => s,
+            None => {
+                return Err(LevitanusError::Unexpected(
+                    "Can not convert pathbuf to str".to_string(),
+                )
+                .into())
+            }
+        },
+    ]);
+    let output = ffprobe.output()?;
+    let out = std::str::from_utf8(&output.stdout)?;
+    debug!("filename: {:?}, ffprobe output: {}", file, out);
+    if let Some(cap) = FPS_RE.captures(out) {
+        let num: u64 = cap["num"].parse()?;
+        let denom: u64 = cap["denom"].parse()?;
+        Ok(Fraction::new(num, denom))
+    } else {
+        Err(LevitanusError::Unexpected("Can not parse resolution from output".to_string()).into())
+    }
+}
+
 pub trait Timestamp {
     fn timestump(&self) -> String;
 }
@@ -173,15 +210,32 @@ impl Render {
             format!("[{}]", filter_nodes.last().unwrap().outputs[0].get_name()),
         ]);
         main_seq.push("-c:v".to_string());
-        // main_seq.push(format!("{}", self.render_settings.encoder));
-        // main_seq.extend(self.render_settings.encoder_options.clone());
+        main_seq.push(format!("{}", self.render_settings.video_encoder));
+        main_seq.extend(
+            self.render_settings
+                .video_encoder_options
+                .iter()
+                .filter_map(|opt| {
+                    if let Some(par) = opt.parameter.ffmpeg_representation() {
+                        Some([format!("-{}", opt.name), par])
+                    } else {
+                        None
+                    }
+                })
+                .flatten(),
+        );
+        if let Some(audio_encoder) = &self.render_settings.audio_encoder {
+            main_seq.push("-c:a".to_string());
+            main_seq.push(format!("{}", audio_encoder));
+        }
         main_seq.push("-r".to_string());
         main_seq.push(format!("{}", self.render_settings.fps));
+        main_seq.extend(["-progress".to_string(), "pipe:1".to_string()]);
         main_seq.push(format!(
             "{}",
             timeline
                 .outfile
-                // .with_extension(&self.render_settings.muxer)
+                .with_extension(&self.render_settings.extension)
                 .display()
         ));
 
@@ -244,9 +298,9 @@ impl Render {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeLine {
-    outfile: PathBuf,
-    _start: Position,
-    _end: Position,
+    pub outfile: PathBuf,
+    start: Position,
+    end: Position,
     resolution: Resolution,
     pad_color: String,
     fps: Fraction,
@@ -261,16 +315,16 @@ impl TimeLine {
     ) -> Self {
         Self {
             outfile,
-            _start: start,
-            _end: end,
+            start,
+            end,
             resolution: render_settings.resolution,
             pad_color: render_settings.pad_color.ffmpeg_representation(),
             fps: render_settings.fps,
             inputs: Vec::new(),
         }
     }
-    fn _length(&self) -> Duration {
-        (self._end - self._start).as_duration()
+    pub fn duration(&self) -> Duration {
+        (self.end - self.start).as_duration()
     }
     fn push(&mut self, mut input: VideoInput) {
         for (idx, item) in self.inputs.iter_mut().enumerate() {
@@ -430,7 +484,7 @@ impl TimeLine {
                     target: None,
                 }],
                 content: NodeContent::Filter(Filter::Setsar {
-                    ratio: "1:1".to_string().into(),
+                    ratio: "1/1".to_string().into(),
                     max: None,
                 }),
             };
@@ -705,6 +759,7 @@ pub struct RenderRegion {
 }
 
 fn get_render_targets(pr: &Project, idx: usize) -> anyhow::Result<PathBuf> {
+    debug!("idx:{}", idx);
     let string = pr
         .get_render_targets()
         .map_err(|e| LevitanusError::Reaper(e.to_string()))?
@@ -713,7 +768,7 @@ fn get_render_targets(pr: &Project, idx: usize) -> anyhow::Result<PathBuf> {
             "Can not estimate region output filename.".to_string(),
         ))?
         .clone();
-
+    debug!("string:{}", string);
     Ok(PathBuf::from(string))
 }
 

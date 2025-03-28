@@ -1,14 +1,18 @@
 use egui::{
     CollapsingHeader, Color32, ComboBox, Context, DragValue, Grid, RichText, ScrollArea, Ui,
 };
+use fraction::Fraction;
 use itertools::Itertools;
 
 use super::{Front, FrontMessage};
-use crate::ffmpeg::{
-    base::Resolution,
-    options::{DurationUnit, Encoder, EncoderType, FfmpegColor, Muxer, Opt, OptionParameter},
-    parser::ParsingProgress,
-    RenderSettings,
+use crate::{
+    ffmpeg::{
+        base::Resolution,
+        options::{DurationUnit, Encoder, EncoderType, FfmpegColor, Muxer, Opt, OptionParameter},
+        parser::ParsingProgress,
+        RenderSettings,
+    },
+    LevitanusError,
 };
 
 impl Front {
@@ -211,6 +215,44 @@ impl Front {
                         }
                     }
                 });
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("framerate").strong());
+            let mut num = *self
+                .state
+                .render_settings
+                .fps
+                .numer()
+                .expect("fps numerator is none");
+            let mut den = *self
+                .state
+                .render_settings
+                .fps
+                .denom()
+                .expect("fps denominator is none");
+            if ui.add(DragValue::new(&mut num)).changed() {
+                self.state.render_settings.fps = Fraction::new(num, den)
+            };
+            ui.label("/");
+            if ui.add(DragValue::new(&mut den)).changed() {
+                self.state.render_settings.fps = Fraction::new(num, den)
+            };
+            ui.add_space(20.0);
+            ComboBox::from_id_salt("default framerates")
+                .selected_text("built-in framerates")
+                .show_ui(ui, |ui| {
+                    for (name, fps) in built_in_framerates() {
+                        if ui
+                            .selectable_label(fps == self.state.render_settings.fps, name)
+                            .clicked()
+                        {
+                            self.state.render_settings.fps = fps.clone()
+                        }
+                    }
+                });
+            if ui.button("get from current video item").clicked() {
+                self.emit(FrontMessage::GetFrameRate);
+            }
         });
     }
 
@@ -1210,5 +1252,18 @@ fn built_in_resolutions() -> Vec<(&'static str, Resolution)> {
                 height: 4320,
             },
         ),
+    ]
+}
+
+fn built_in_framerates() -> Vec<(&'static str, Fraction)> {
+    vec![
+        ("ntsc", Fraction::new(30000_u64, 1001_u64)),
+        ("pal", Fraction::new(25_u64, 1_u64)),
+        ("qntsc", Fraction::new(30000_u64, 1001_u64)),
+        ("qpal", Fraction::new(25_u64, 1_u64)),
+        ("sntsc", Fraction::new(30000_u64, 1001_u64)),
+        ("spal", Fraction::new(25_u64, 1_u64)),
+        ("film", Fraction::new(24_u64, 1_u64)),
+        ("ntsc - film", Fraction::new(24000_u64, 1001_u64)),
     ]
 }
