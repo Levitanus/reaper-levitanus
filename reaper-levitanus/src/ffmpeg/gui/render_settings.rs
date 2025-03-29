@@ -5,14 +5,11 @@ use fraction::Fraction;
 use itertools::Itertools;
 
 use super::{Front, FrontMessage};
-use crate::{
-    ffmpeg::{
-        base::Resolution,
-        options::{DurationUnit, Encoder, EncoderType, FfmpegColor, Muxer, Opt, OptionParameter},
-        parser::ParsingProgress,
-        RenderSettings,
-    },
-    LevitanusError,
+use crate::ffmpeg::{
+    base_types::Resolution,
+    options::{DurationUnit, Encoder, EncoderType, FfmpegColor, Muxer, Opt, OptionParameter},
+    parser::ParsingProgress,
+    RenderSettings,
 };
 
 impl Front {
