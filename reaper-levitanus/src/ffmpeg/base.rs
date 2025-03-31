@@ -352,20 +352,6 @@ struct VideoInput {
     fade_out_is_x_fade: bool,
     track_index: usize,
 }
-impl VideoInput {
-    fn split_at(self, timeline_position: Position) -> (Self, Self) {
-        let mut head = self.clone();
-        let mut tail = self;
-        head.timeline_end_position = timeline_position;
-        tail.source_offset =
-            tail.source_offset + (timeline_position - tail.timeline_position).as_duration();
-        tail.timeline_position = timeline_position;
-        (head, tail)
-    }
-    fn get_length(&self) -> Duration {
-        (self.timeline_end_position - self.timeline_position).as_duration()
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimeLine {
