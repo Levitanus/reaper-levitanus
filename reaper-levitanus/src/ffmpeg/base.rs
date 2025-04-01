@@ -2,7 +2,11 @@ use std::{path::PathBuf, process::Command, time::Duration};
 
 use crate::LevitanusError;
 
-use super::base_types::{RenderSettings, Resolution};
+use super::{
+    base_types::{RenderSettings, Resolution, Timestamp},
+    options::FfmpegColor,
+    stream_ids::NamedStreamId,
+};
 
 use fraction::Fraction;
 use log::debug;
@@ -25,27 +29,20 @@ pub struct Render {
 }
 impl Render {
     pub fn get_render_job(&self, timeline: TimeLine) -> Result<Command, LevitanusError> {
-        // let (input_nodes, filter_nodes) = timeline.get_nodes()?;
-        // println!(
-        //     "inputs are:\n{:#?}\n filters are:\n{:#?}",
-        //     input_nodes, filter_nodes
-        // );
+        let mut id_generator = NamedStreamId::new();
+        let content = timeline.content.render(
+            &self.render_settings.resolution,
+            &self.render_settings.fps,
+            &self.render_settings.pad_color,
+            &mut id_generator,
+        );
         let mut main_seq: Vec<String> = Vec::new();
-        // for node in input_nodes.iter() {
-        //     main_seq.extend(self.render_node(node)?);
-        // }
-        // main_seq.push("-filter_complex".to_string());
-        // let mut filter_seq = Vec::new();
-        // for node in filter_nodes.iter() {
-        //     filter_seq.push(self.render_node(node)?);
-        // }
-        // main_seq.push(filter_seq.into_iter().map(|vec| vec.join("")).join(";"));
-
-        // main_seq.push(format!("-c:v {}", self.render_settings.codec));
-        // main_seq.extend([
-        //     "-map".to_string(),
-        //     format!("[{}]", filter_nodes.last().unwrap().outputs[0].get_name()),
-        // ]);
+        main_seq.extend(content.inputs);
+        if let Some(f) = content.filters {
+            main_seq.push("-filter_complex".to_string());
+            main_seq.push(format!("{}[{}]", f, content.id));
+        }
+        main_seq.extend(["-map".to_string(), format!("[{}]", content.id)]);
         main_seq.push("-c:v".to_string());
         main_seq.push(format!("{}", self.render_settings.video_encoder));
         main_seq.extend(
@@ -61,6 +58,8 @@ impl Render {
                 })
                 .flatten(),
         );
+        main_seq.push("-pix_fmt".to_string());
+        main_seq.push(format!("{}", self.render_settings.pixel_format));
         if let Some(audio_encoder) = &self.render_settings.audio_encoder {
             main_seq.push("-c:a".to_string());
             main_seq.push(format!("{}", audio_encoder));
@@ -145,7 +144,7 @@ impl TimeLineContent {
             None => Video::new(video),
             Some(left) => match video.fade_in {
                 None => Concat::new(left, Video::new(video)),
-                Some(d) => FadeX::new(left, Video::new(video), d),
+                Some(d) => XFade::new(left, Video::new(video), d),
             },
         };
         // debug!("left: {:?}", left);
@@ -161,7 +160,7 @@ impl TimeLineContent {
                     self.content_type = content.content_type;
                 }
                 Some(d) => {
-                    let content = FadeX::new(left, right, d);
+                    let content = XFade::new(left, right, d);
                     self.z_index = content.z_index;
                     self.content_type = content.content_type;
                 }
@@ -225,17 +224,17 @@ impl TimeLineContent {
                     }
                 }
             }
-            TimeLineContentType::FadeX(fadex) => {
+            TimeLineContentType::XFade(fadex) => {
                 if position.as_duration()
                     <= fadex.left.timeline_end_position.as_duration() - fadex.fade_duration
                 {
                     let (left, right) = fadex.left.split(position);
-                    (left, FadeX::new(right, *fadex.right, fadex.fade_duration))
+                    (left, XFade::new(right, *fadex.right, fadex.fade_duration))
                 } else if fadex.right.timeline_position.as_duration() + fadex.fade_duration
                     <= position.as_duration()
                 {
                     let (left, right) = fadex.right.split(position);
-                    (FadeX::new(left, *fadex.left, fadex.fade_duration), right)
+                    (XFade::new(left, *fadex.left, fadex.fade_duration), right)
                 } else {
                     let (l_left, l_right) = fadex.left.split(position);
                     let (r_left, r_right) = fadex.right.split(position);
@@ -243,20 +242,166 @@ impl TimeLineContent {
                         (r_left.timeline_end_position - r_left.timeline_end_position).as_duration();
                     let r_d = (l_right.timeline_end_position - l_right.timeline_end_position)
                         .as_duration();
-                    let left = FadeX::new(l_left, r_left, l_d);
-                    let right = FadeX::new(l_right, r_right, r_d);
+                    let left = XFade::new(l_left, r_left, l_d);
+                    let right = XFade::new(l_right, r_right, r_d);
                     (left, right)
                 }
+            }
+        }
+    }
+    fn render(
+        &self,
+        resolution: &Resolution,
+        framerate: &Fraction,
+        bg_color: &FfmpegColor,
+        id_generator: &mut NamedStreamId,
+    ) -> TimeLineContentRender {
+        match &self.content_type {
+            TimeLineContentType::Background => {
+                let duration = (self.timeline_end_position - self.timeline_position).as_duration();
+                let filters = format!(
+                    "color=c={}:s={}:duration={}",
+                    bg_color.ffmpeg_representation(),
+                    format!("{}x{}", resolution.width, resolution.height),
+                    duration.as_secs_f64()
+                );
+                let id = id_generator.id("bg");
+                TimeLineContentRender {
+                    id,
+                    inputs: Vec::new(),
+                    filters: Some(filters),
+                }
+            }
+            TimeLineContentType::Video(v) => {
+                let duration = (self.timeline_end_position - self.timeline_position).as_duration();
+                let inputs = vec![
+                    "-ss".to_string(),
+                    format!("{}", v.source_offset.timestump()),
+                    "-t".to_string(),
+                    format!("{}", duration.timestump()),
+                    "-i".to_string(),
+                    format!("{}", v.file.to_string_lossy()),
+                ];
+                let default_filters = vec![
+                    format!(
+                        "[{}]fps=fps={}/{}",
+                        id_generator.id("v").split_off(1) + ":v",
+                        framerate.numer().unwrap_or(&30000),
+                        framerate.denom().unwrap_or(&1001)
+                    ),
+                    format!(
+                        "scale=w={}:h={}:force_original_aspect_ratio=decrease:force_divisible_by=2",
+                        resolution.width, resolution.height
+                    ),
+                    format!(
+                        "pad=width={w}:height={h}:x={w}/2-iw/2:y={h}/2-ih/2:color={c}",
+                        w = resolution.width,
+                        h = resolution.height,
+                        c = bg_color.ffmpeg_representation()
+                    ),
+                    "setsar=ratio=1/1".to_string(),
+                ];
+                let id = id_generator.id("vf");
+                TimeLineContentRender {
+                    id,
+                    inputs,
+                    filters: Some(default_filters.join(",")),
+                }
+            }
+            TimeLineContentType::Concat(con) => {
+                let id = id_generator.id("conc");
+                let left = con
+                    .left
+                    .render(resolution, framerate, bg_color, id_generator);
+                let right = con
+                    .right
+                    .render(resolution, framerate, bg_color, id_generator);
+                let filters = if let Some(f) = Self::render_filters(&left, &right) {
+                    format!("{};", f)
+                } else {
+                    String::default()
+                };
+                let filters = vec![
+                    format!(
+                        "{filters}[{l_id}][{r_id}]concat=n=2:v=1:a=0",
+                        l_id = left.id,
+                        r_id = right.id
+                    ),
+                    format!(
+                        "fps=fps={}/{}",
+                        framerate.numer().unwrap_or(&30000),
+                        framerate.denom().unwrap_or(&1001)
+                    ),
+                ];
+
+                TimeLineContentRender {
+                    id,
+                    inputs: left.inputs.into_iter().chain(right.inputs).collect(),
+                    filters: Some(filters.join(",")),
+                }
+            }
+            TimeLineContentType::XFade(xfade) => {
+                let id = id_generator.id("xfade");
+                let left = xfade
+                    .left
+                    .render(resolution, framerate, bg_color, id_generator);
+                let right = xfade
+                    .right
+                    .render(resolution, framerate, bg_color, id_generator);
+                let filters = if let Some(f) = Self::render_filters(&left, &right) {
+                    format!("{};", f)
+                } else {
+                    String::default()
+                };
+                let filters = format!(
+                    "{filters}[{l_id}][{r_id}]xfade=transition=fade:duration={duration}:offset={offset}",
+                    l_id = left.id,
+                    r_id = right.id,
+                    duration=xfade.fade_duration.as_secs_f64(),
+                    offset=xfade.right.timeline_position.as_duration().as_secs_f64()
+                );
+
+                TimeLineContentRender {
+                    id,
+                    inputs: left.inputs.into_iter().chain(right.inputs).collect(),
+                    filters: Some(filters),
+                }
+            }
+        }
+    }
+
+    fn render_filters(
+        left: &TimeLineContentRender,
+        right: &TimeLineContentRender,
+    ) -> Option<String> {
+        if let Some(l_f) = &left.filters {
+            let mut f = format!("{}[{}]", l_f, left.id);
+            if let Some(r_f) = &right.filters {
+                f = format!("{};{}[{}]", f, r_f, right.id);
+            }
+            Some(f)
+        } else {
+            if let Some(r_f) = &right.filters {
+                Some(format!("{}[{}]", r_f, right.id))
+            } else {
+                None
             }
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TimeLineContentType {
+pub struct TimeLineContentRender {
+    id: String,
+    inputs: Vec<String>,
+    filters: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum TimeLineContentType {
     Background,
     Concat(Concat),
-    FadeX(FadeX),
+    XFade(XFade),
     Video(Video),
 }
 
@@ -287,12 +432,12 @@ impl Concat {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct FadeX {
+struct XFade {
     left: Box<TimeLineContent>,
     right: Box<TimeLineContent>,
     fade_duration: Duration,
 }
-impl FadeX {
+impl XFade {
     fn new(left: TimeLineContent, right: TimeLineContent, duration: Duration) -> TimeLineContent {
         assert_eq!(
             left.timeline_end_position - duration.into(),
@@ -306,7 +451,7 @@ impl FadeX {
         let timeline_position = left.timeline_position;
         let timeline_end_position = right.timeline_end_position;
         TimeLineContent {
-            content_type: TimeLineContentType::FadeX(FadeX {
+            content_type: TimeLineContentType::XFade(XFade {
                 left: Box::new(left),
                 right: Box::new(right),
                 fade_duration: duration,

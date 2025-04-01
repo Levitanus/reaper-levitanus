@@ -158,3 +158,13 @@ impl Timestamp for Duration {
         format!("{hours}:{mins}:{secs}.{millis}")
     }
 }
+impl Timestamp for rea_rs::SourceOffset {
+    fn timestump(&self) -> String {
+        let delta = self.get();
+        let hours = delta.num_hours() / 60 / 60;
+        let mins = delta.num_minutes() / 60;
+        let secs = delta.num_seconds();
+        let millis = delta.num_milliseconds();
+        format!("{hours}:{mins}:{secs}.{millis}")
+    }
+}
