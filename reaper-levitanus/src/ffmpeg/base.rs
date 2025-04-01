@@ -5,7 +5,7 @@ use crate::LevitanusError;
 use super::{
     base_types::{RenderSettings, Resolution, Timestamp},
     options::FfmpegColor,
-    stream_ids::NamedStreamId,
+    stream_ids::StreamId,
 };
 
 use fraction::Fraction;
@@ -29,7 +29,7 @@ pub struct Render {
 }
 impl Render {
     pub fn get_render_job(&self, timeline: TimeLine) -> Result<Command, LevitanusError> {
-        let mut id_generator = NamedStreamId::new();
+        let mut id_generator = StreamId::new();
         let content = timeline.content.render(
             &self.render_settings.resolution,
             &self.render_settings.fps,
@@ -38,11 +38,16 @@ impl Render {
         );
         let mut main_seq: Vec<String> = Vec::new();
         main_seq.extend(content.inputs);
+        main_seq.extend(["-i".to_string(), format!("{}", timeline.outfile.display())]);
         if let Some(f) = content.filters {
             main_seq.push("-filter_complex".to_string());
             main_seq.push(format!("{}[{}]", f, content.id));
         }
-        main_seq.extend(["-map".to_string(), format!("[{}]", content.id)]);
+        main_seq.extend(["-map".to_string(), format!("[{}]:0", content.id)]);
+        main_seq.extend([
+            "-map".to_string(),
+            format!("{}:0", id_generator.input_audio_id()),
+        ]);
         main_seq.push("-c:v".to_string());
         main_seq.push(format!("{}", self.render_settings.video_encoder));
         main_seq.extend(
@@ -64,6 +69,19 @@ impl Render {
             main_seq.push("-c:a".to_string());
             main_seq.push(format!("{}", audio_encoder));
         }
+        main_seq.extend(
+            self.render_settings
+                .audio_encoder_options
+                .iter()
+                .filter_map(|opt| {
+                    if let Some(par) = opt.parameter.ffmpeg_representation() {
+                        Some([format!("-{}", opt.name), par])
+                    } else {
+                        None
+                    }
+                })
+                .flatten(),
+        );
         main_seq.push("-r".to_string());
         main_seq.push(format!("{}", self.render_settings.fps));
         main_seq.extend(["-progress".to_string(), "pipe:1".to_string()]);
@@ -190,7 +208,10 @@ impl TimeLineContent {
                 left.fade_out = None;
                 right.fade_in = None;
                 right.source_offset = SourceOffset::from_secs_f64(
-                    right.source_offset.as_secs_f64() + position.as_duration().as_secs_f64(),
+                    right.source_offset.as_secs_f64()
+                        + (position - self.timeline_position)
+                            .as_duration()
+                            .as_secs_f64(),
                 );
                 let left = TimeLineContent {
                     content_type: TimeLineContentType::Video(left),
@@ -204,6 +225,10 @@ impl TimeLineContent {
                     timeline_end_position: self.timeline_end_position,
                     z_index: self.z_index,
                 };
+                debug!(
+                    "video pos: {:?}, split pos: {:?},\nleft: {:#?},\nright: {:#?}",
+                    self.timeline_position, position, left, right
+                );
                 (left, right)
             }
             TimeLineContentType::Concat(concat) => {
@@ -254,7 +279,7 @@ impl TimeLineContent {
         resolution: &Resolution,
         framerate: &Fraction,
         bg_color: &FfmpegColor,
-        id_generator: &mut NamedStreamId,
+        id_generator: &mut StreamId,
     ) -> TimeLineContentRender {
         match &self.content_type {
             TimeLineContentType::Background => {
@@ -285,7 +310,7 @@ impl TimeLineContent {
                 let default_filters = vec![
                     format!(
                         "[{}]fps=fps={}/{}",
-                        id_generator.id("v").split_off(1) + ":v",
+                        id_generator.input_video_id(),
                         framerate.numer().unwrap_or(&30000),
                         framerate.denom().unwrap_or(&1001)
                     ),
