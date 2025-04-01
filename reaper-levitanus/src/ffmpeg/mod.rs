@@ -1,12 +1,12 @@
 use gui::{Backend, BACKEND_ID_STRING};
 use rea_rs::Reaper;
 
-pub use self::base::RenderSettings;
-use self::base::{build_render_timelines, Render};
+pub use self::base_types::RenderSettings;
 pub use self::gui::front;
 use std::{cell::RefCell, error::Error, sync::Arc};
 
 mod base;
+mod base_types;
 mod filters;
 mod gui;
 mod nodes;
@@ -14,13 +14,13 @@ mod options;
 mod parser;
 mod stream_ids;
 
-pub fn render_video() -> Result<(), Box<dyn Error>> {
-    let render_settings = RenderSettings::default();
-    let timelines = build_render_timelines(&render_settings)?;
-    let render = Render { render_settings };
-    render.render_timelines(timelines)?;
-    Ok(())
-}
+// pub fn render_video() -> Result<(), Box<dyn Error>> {
+//     let render_settings = RenderSettings::default();
+//     let timelines = build_render_timelines(&render_settings)?;
+//     let render = Render { render_settings };
+//     render.render_timelines(timelines)?;
+//     Ok(())
+// }
 
 pub fn ffmpeg_gui() -> Result<(), Box<dyn Error>> {
     let rpr = Reaper::get_mut();

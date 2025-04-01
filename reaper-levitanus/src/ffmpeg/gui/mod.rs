@@ -23,7 +23,8 @@ use render_widget::RenderJob;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    base::{framerate_from_video, Resolution, TimeLine},
+    base::TimeLine,
+    base_types::{framerate_from_video, Resolution},
     options::{Encoder, Muxer, Opt},
     parser::{check_parsed_paths, encoders_path, muxers_path, parse_all, ParsingProgress},
     RenderSettings,
