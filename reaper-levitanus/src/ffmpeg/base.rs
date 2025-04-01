@@ -1,18 +1,22 @@
 use std::{path::PathBuf, process::Command, time::Duration};
 
-use crate::LevitanusError;
+use crate::{
+    ffmpeg::gui::{EXT_SECTION, PERSIST},
+    LevitanusError,
+};
 
 use super::{
     base_types::{RenderSettings, Resolution, Timestamp},
-    options::FfmpegColor,
+    options::{FfmpegColor, OptionParameter},
     stream_ids::StreamId,
 };
 
 use fraction::Fraction;
-use log::debug;
+use itertools::Itertools;
+use log::{debug, error};
 use rea_rs::{
     project_info::{BoundsMode, RenderMode},
-    Position, Project, Reaper, SourceOffset,
+    ExtState, HasExtState, Mutable, Position, Project, Reaper, SourceOffset, Track, WithReaperPtr,
 };
 use serde::{Deserialize, Serialize};
 
@@ -30,12 +34,21 @@ pub struct Render {
 impl Render {
     pub fn get_render_job(&self, timeline: TimeLine) -> Result<Command, LevitanusError> {
         let mut id_generator = StreamId::new();
-        let content = timeline.content.render(
+        let master_filters = get_filters(&Reaper::get().current_project());
+        let mut content = timeline.content.render(
             &self.render_settings.resolution,
             &self.render_settings.fps,
             &self.render_settings.pad_color,
             &mut id_generator,
         );
+        if let Some(f) = master_filters {
+            let master = f.into_iter().map(|f| f.ffmpeg_representation()).join(";");
+            match content.filters.as_mut() {
+                Some(f) => *f += &master,
+                None => content.filters = Some(master),
+            }
+        }
+
         let mut main_seq: Vec<String> = Vec::new();
         main_seq.extend(content.inputs);
         main_seq.extend(["-i".to_string(), format!("{}", timeline.outfile.display())]);
@@ -307,10 +320,11 @@ impl TimeLineContent {
                     "-i".to_string(),
                     format!("{}", v.file.to_string_lossy()),
                 ];
-                let default_filters = vec![
+                let input_id = id_generator.input_video_id();
+                let filters = vec![
                     format!(
                         "[{}]fps=fps={}/{}",
-                        id_generator.input_video_id(),
+                        input_id,
                         framerate.numer().unwrap_or(&30000),
                         framerate.denom().unwrap_or(&1001)
                     ),
@@ -325,12 +339,16 @@ impl TimeLineContent {
                         c = bg_color.ffmpeg_representation()
                     ),
                     "setsar=ratio=1/1".to_string(),
-                ];
+                ]
+                .into_iter();
+                let mut filters =
+                    filters.chain(v.filter_chain.iter().map(|f| f.ffmpeg_representation()));
+
                 let id = id_generator.id("vf");
                 TimeLineContentRender {
                     id,
                     inputs,
-                    filters: Some(default_filters.join(",")),
+                    filters: Some(filters.join(",")),
                 }
             }
             TimeLineContentType::Concat(con) => {
@@ -494,6 +512,7 @@ struct Video {
     fade_in: Option<Duration>,
     fade_out: Option<Duration>,
     source_offset: SourceOffset,
+    filter_chain: Vec<SerializedFilter>,
 }
 impl Video {
     fn new(video: VideoInput) -> TimeLineContent {
@@ -503,6 +522,7 @@ impl Video {
                 fade_in: video.fade_in,
                 fade_out: video.fade_out,
                 source_offset: video.source_offset,
+                filter_chain: video.filter_chain,
             }),
             timeline_position: video.timeline_position,
             timeline_end_position: video.timeline_end_position,
@@ -521,6 +541,7 @@ struct VideoInput {
     fade_out: Option<Duration>,
     fade_out_is_x_fade: bool,
     track_index: usize,
+    filter_chain: Vec<SerializedFilter>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -567,16 +588,83 @@ pub fn build_render_timelines(render_settings: &RenderSettings) -> anyhow::Resul
     Ok(timelines.collect())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedFilter {
+    name: String,
+    options: Vec<SerializedOption>,
+}
+impl Default for SerializedFilter {
+    fn default() -> Self {
+        Self {
+            name: "default".to_string(),
+            options: Vec::new(),
+        }
+    }
+}
+impl SerializedFilter {
+    pub fn ffmpeg_representation(&self) -> String {
+        let options = self
+            .options
+            .iter()
+            .map(|opt| opt.ffmpeg_representation())
+            .join(":");
+        format!("{}={}", self.name, options)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializedOption {
+    name: String,
+    value: OptionParameter,
+}
+impl SerializedOption {
+    pub fn ffmpeg_representation(&self) -> String {
+        format!(
+            "{}={}",
+            self.name,
+            self.value
+                .ffmpeg_representation()
+                .unwrap_or("default".to_string())
+        )
+    }
+}
+
+pub fn get_filters<T>(item: &T) -> Option<Vec<SerializedFilter>>
+where
+    T: HasExtState,
+{
+    static EXT_KEY_FILTERS: &str = "filters";
+    match ExtState::new(EXT_SECTION, EXT_KEY_FILTERS, None, PERSIST, item, None).get() {
+        Ok(filters) => filters,
+
+        Err(e) => {
+            error!("can not get ext state: {:?}", e);
+            None
+        }
+    }
+}
+
+pub fn set_filters<T>(item: &T, filters: Vec<SerializedFilter>)
+where
+    T: HasExtState,
+{
+    static EXT_KEY_FILTERS: &str = "filters";
+    ExtState::new(EXT_SECTION, EXT_KEY_FILTERS, None, PERSIST, item, None).set(filters);
+}
+
 fn build_timeline(render_region: RenderRegion, render_settings: RenderSettings) -> TimeLine {
     let rpr = Reaper::get();
     let pr = rpr.current_project();
     let (start, end) = (render_region.start, render_region.end);
     let mut timeline = TimeLine::new(render_region.file, start, end, render_settings);
     for track in pr.iter_tracks().rev() {
+        let mut track = Track::<Mutable>::new(&pr, track.get());
+        let track_filters = get_filters(&track);
         for idx in 0..track.n_items() {
             let item = track
                 .get_item(idx)
                 .expect(&format!("can not get item with index {idx}"));
+            let item_filters = get_filters(&item);
             if item.position() >= end {
                 continue;
             }
@@ -615,6 +703,14 @@ fn build_timeline(render_region: RenderRegion, render_settings: RenderSettings) 
             let fade_out = item.fade_out().length;
             debug!("fade_in: {:?}, fade_out: {:?}", fade_in, fade_out);
 
+            let mut filter_chain = match item_filters {
+                Some(f) => f,
+                None => vec![SerializedFilter::default()],
+            };
+            if let Some(f) = track_filters.clone() {
+                filter_chain.extend(f);
+            }
+
             timeline.push(VideoInput {
                 file,
                 timeline_position,
@@ -632,6 +728,7 @@ fn build_timeline(render_region: RenderRegion, render_settings: RenderSettings) 
                 },
                 fade_out_is_x_fade: false,
                 track_index: track.index(),
+                filter_chain,
             })
         }
     }

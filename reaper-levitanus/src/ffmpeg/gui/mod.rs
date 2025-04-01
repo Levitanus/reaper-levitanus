@@ -35,7 +35,7 @@ mod render_settings;
 mod render_widget;
 mod small_widgets;
 
-static PERSIST: bool = true;
+pub static PERSIST: bool = true;
 pub static BACKEND_ID_STRING: &str = "LevitanusFfmpegGui";
 pub static SOCKET_ADDRESS: &str = "127.0.0.1:49332";
 pub static EXT_SECTION: &str = "Levitanus";
