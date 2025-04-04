@@ -1,5 +1,7 @@
 use std::{num::ParseIntError, time::Duration};
 
+use egui::Color32;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -59,7 +61,7 @@ pub struct Opt {
     pub default: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd)]
 pub enum OptionParameter {
     Int(Option<i32>),
     String(Option<String>),
@@ -137,6 +139,83 @@ impl OptionParameter {
                 selected_idx,
             } => selected_idx.is_some(),
             Self::Flags { items: _, selected } => selected.is_some(),
+        }
+    }
+    pub fn ffmpeg_representation(&self) -> Option<String> {
+        match self {
+            Self::Int(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::String(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::Float(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::Bool(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::Binary(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::Rational(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::Duration(n) => match n {
+                Some(n) => match n {
+                    DurationUnit::Seconds(s) => Some(format!("{}", s)),
+                    DurationUnit::Milliseconds(ms) => Some(format!("{}ms", ms)),
+                    DurationUnit::Microseconds(us) => Some(format!("{}us", us)),
+                    DurationUnit::Timestamp {
+                        hours,
+                        minutes,
+                        seconds,
+                    } => Some(format!("{}:{}:{}", hours, minutes, seconds)),
+                },
+                None => None,
+            },
+            Self::Dictionary(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::Color(n) => match n {
+                Some(n) => Some(format!("{}", n.ffmpeg_representation())),
+                None => None,
+            },
+            Self::ImageSize(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::FrameRate(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::Enum {
+                items,
+                selected_idx,
+            } => match selected_idx {
+                Some(n) => Some(format!("{}", items[*n])),
+                None => None,
+            },
+            Self::Flags { items, selected } => match selected {
+                Some(v) => Some(
+                    items
+                        .iter()
+                        .zip(v)
+                        .map(|(it, sel)| match sel {
+                            true => format!("+{}", it),
+                            false => format!("-{}", it),
+                        })
+                        .join(""),
+                ),
+                None => None,
+            },
         }
     }
 }
@@ -233,7 +312,7 @@ impl Default for PixelFormat {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, PartialOrd, Clone)]
 pub enum DurationUnit {
     Seconds(f64),
     Milliseconds(i32),
@@ -283,7 +362,7 @@ impl DurationUnit {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, PartialOrd, Clone)]
 pub struct FfmpegColor {
     pub color: u32,
     pub alpha: u8,
@@ -296,24 +375,24 @@ impl Default for FfmpegColor {
         }
     }
 }
-// impl From<Color32> for FfmpegColor {
-//     fn from(value: Color32) -> Self {
-//         let alpha = value.a();
-//         let color: u32 =
-//             ((value.r() as u32) << 16) + ((value.g() as u32) << 8) + (value.b() as u32);
-//         Self { color, alpha }
-//     }
-// }
-// impl Into<Color32> for FfmpegColor {
-//     fn into(self) -> Color32 {
-//         Color32::from_rgba_premultiplied(
-//             (self.color >> 16) as u8,
-//             (self.color >> 8) as u8,
-//             (self.color % 0xffff00) as u8,
-//             self.alpha,
-//         )
-//     }
-// }
+impl From<Color32> for FfmpegColor {
+    fn from(value: Color32) -> Self {
+        let alpha = value.a();
+        let color: u32 =
+            ((value.r() as u32) << 16) + ((value.g() as u32) << 8) + (value.b() as u32);
+        Self { color, alpha }
+    }
+}
+impl Into<Color32> for FfmpegColor {
+    fn into(self) -> Color32 {
+        Color32::from_rgba_premultiplied(
+            (self.color >> 16) as u8,
+            (self.color >> 8) as u8,
+            (self.color % 0xffff00) as u8,
+            self.alpha,
+        )
+    }
+}
 impl FfmpegColor {
     pub fn new(color: u32, alpha: u8) -> Self {
         Self { color, alpha }

@@ -3,6 +3,8 @@ use std::{path::PathBuf, time::Duration};
 use rea_rs::Position;
 use serde::{Deserialize, Serialize};
 
+use crate::LevitanusError;
+
 use super::filters::Filter;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -42,14 +44,22 @@ impl Node {
         other: &mut Node,
         sink_index: usize,
         source_index: usize,
-    ) -> Result<(), String> {
+    ) -> Result<(), LevitanusError> {
         let sink = match self.inputs.get(sink_index) {
             Some(sink) => sink,
-            None => return Err(format!("can not get sink with index: {sink_index}")),
+            None => {
+                return Err(LevitanusError::Render(format!(
+                    "can not get sink with index: {sink_index}"
+                )))
+            }
         };
         let source = match other.outputs.get(source_index) {
             Some(source) => source,
-            None => return Err(format!("can not get sink with index: {sink_index}")),
+            None => {
+                return Err(LevitanusError::Render(format!(
+                    "can not get sink with index: {sink_index}"
+                )))
+            }
         };
         let new_sink = sink.clone().with_target(Some(source.get_name()));
         let new_source = source.clone().with_target(Some(sink.get_name()));
@@ -62,14 +72,22 @@ impl Node {
         other: &mut Node,
         source_index: usize,
         sink_index: usize,
-    ) -> Result<(), String> {
+    ) -> Result<(), LevitanusError> {
         let sink = match other.inputs.get(sink_index) {
             Some(sink) => sink,
-            None => return Err(format!("can not get sink with index: {sink_index}")),
+            None => {
+                return Err(LevitanusError::Render(format!(
+                    "can not get sink with index: {sink_index}"
+                )))
+            }
         };
         let source = match self.outputs.get(source_index) {
             Some(source) => source,
-            None => return Err(format!("can not get sink with index: {sink_index}")),
+            None => {
+                return Err(LevitanusError::Render(format!(
+                    "can not get sink with index: {sink_index}"
+                )))
+            }
         };
         let new_sink = sink.clone().with_target(Some(source.get_name()));
         let new_source = source.clone().with_target(Some(sink.get_name()));

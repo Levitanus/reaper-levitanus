@@ -13,8 +13,6 @@ use log::info;
 use path_absolutize::Absolutize;
 use regex::Regex;
 
-use vizia::prelude::*;
-
 use super::options::{
     Encoder, EncoderType, Muxer, Opt, OptionParameter, ParsedFilter, PixelFormat,
 };
@@ -460,7 +458,7 @@ fn parse_pix_fmts(
         let bits_per_pixel: u8 = cap["bits_per_pixel"].parse()?;
         let bit_depth = cap["bit_depth"].to_string();
 
-        let filter = PixelFormat {
+        let pix_format = PixelFormat {
             name,
             input_support,
             output_support,
@@ -471,7 +469,7 @@ fn parse_pix_fmts(
             bits_per_pixel,
             bit_depth,
         };
-        pix_fmts.push(filter);
+        pix_fmts.push(pix_format);
     }
     let filters_string: String = serde_json::to_string_pretty(&pix_fmts)?;
     info!(
@@ -593,7 +591,7 @@ fn output_with_args(
     Ok(string)
 }
 
-#[derive(Debug, Clone, PartialEq, PartialOrd, Data)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum ParsingProgress {
     Progress(f32),
     Result(Result<(), String>),

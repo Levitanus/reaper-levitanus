@@ -1,93 +1,142 @@
-use log::debug;
-use vizia::prelude::*;
+use super::{Front, FrontMessage};
+use crate::ffmpeg::parser::ParsingProgress;
+use egui::{
+    text::LayoutJob, Color32, ComboBox, Context, FontId, Frame, Id, InnerResponse, Layout, Modal,
+    ProgressBar, Response, RichText, Stroke, TextFormat, Ui,
+};
 
-use super::{FrontState, Widgets};
-use crate::ffmpeg::{gui::FrontMessage, parser::ParsingProgress};
-
-pub fn modal_yes_no<Y, N>(
-    cx: &mut Context,
-    title: impl AsRef<str>,
-    description: impl AsRef<str> + 'static,
-    on_yes: Y,
-    on_no: N,
-) where
-    Y: 'static + Fn(&mut EventContext) + Send + Sync + Copy,
-    N: 'static + Fn(&mut EventContext) + Send + Sync + Copy,
-{
-    let description = description.as_ref().to_string();
-    Window::popup(cx, true, move |cx| {
-        VStack::new(cx, |cx| {
-            Label::new(cx, description.clone())
-                .width(Pixels(400.0))
-                .text_align(TextAlign::Center);
-            HStack::new(cx, |cx| {
-                let width = Percentage(40.0);
-                Button::new(cx, |cx| Label::new(cx, "No"))
-                    .on_press(on_no)
-                    .width(width);
-                Button::new(cx, |cx| Label::new(cx, "Yes"))
-                    .on_press(on_yes)
-                    .width(width);
-            })
-            .alignment(Alignment::Center);
-        });
-    })
-    .title(title.as_ref())
-    .always_on_top(true)
-    .on_close(|_| std::process::exit(0))
-    .inner_size((400, 150))
-    .resizable(false);
-}
-
-pub fn widget_parser(cx: &mut Context) {
-    Binding::new(
-        cx,
-        FrontState::widgets.then(Widgets::parsing_progress),
-        |cx, lens| match lens.get(cx) {
-            ParsingProgress::Unparsed => {
-                modal_yes_no(
-                    cx,
-                    "Parse FFMPEG",
-                    "FFMPEG muxers, codecs and filters are not yet parsed.\n\
-                            Do you wish to parse them now?\n\
-                            It will take up to 30 seconds.",
-                    |ex| {
-                        debug!("pressed yes");
-                        ex.emit(FrontMessage::Parse);
-                    },
-                    |_| std::process::exit(0),
-                );
-            }
-            other => {
-                HStack::new(cx, |cx| match other {
-                    ParsingProgress::Result(r) => {
-                        if let Err(e) = r {
-                            Label::new(cx, format!("failed to parse FFMPEG: {}", e))
-                                .color(Color::red());
+impl Front {
+    pub(crate) fn widget_parser(&self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        Self::frame(ui, |ui| {
+            match &self.parsing_progress {
+                ParsingProgress::Unparsed => {
+                    Modal::new(Id::new("parse yes no")).show(ctx, |ui| {
+                        ui.heading("Parse FFMPEG");
+                        ui.label(
+                            "FFMPEG muxers, codecs and filters are not yet parsed.\n\
+                        Do you wish to parse them now?\n\
+                        It will take up to 30 seconds.",
+                        );
+                        ui.horizontal_centered(|ui| {
+                            if ui.button("Yes").clicked() {
+                                self.emit(FrontMessage::Parse);
+                                // ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
+                            if ui.button("No").clicked() {
+                                self.emit(FrontMessage::Exit);
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
+                        });
+                    });
+                }
+                ParsingProgress::Progress(p) => {
+                    ui.add(ProgressBar::new(*p));
+                }
+                ParsingProgress::Result(r) => {
+                    // ui.horizontal(|ui| {
+                    match r {
+                        Ok(_) => (),
+                        Err(e) => {
+                            ui.label(
+                                RichText::new(format!("failed to parse FFMPEG: {}", e))
+                                    .color(Color32::RED),
+                            );
                         }
-                        Button::new(cx, |cx| Label::new(cx, "Reparse FFMPEG"))
-                            .on_press(|ex| ex.emit(FrontMessage::Parse));
                     }
-
-                    ParsingProgress::Progress(_) => {
-                        ProgressBar::horizontal(
-                            cx,
-                            lens.map(|progr| match progr {
-                                ParsingProgress::Progress(p) => *p,
-                                _ => 0.0,
-                            }),
-                        )
-                        .width(Percentage(90.0));
+                    if ui.button("reparse ffmpeg").clicked() {
+                        self.emit(FrontMessage::Parse);
                     }
-                    ParsingProgress::Unparsed => panic!("this match arm has to be filled earlier"),
-                })
-                .background_color(Color::rgba(0, 0, 0, 100))
-                .height(Pixels(35.0))
-                .alignment(Alignment::Center)
-                .gap(Stretch(1.0))
-                .padding_left(Pixels(20.0))
-                .padding_right(Pixels(20.0));
+                    // });
+                }
             }
-        },
-    )
+        });
+    }
+
+    pub(crate) fn widget_error_box(&self, ctx: &Context, error: impl AsRef<str>) {
+        Modal::new(Id::new("error")).show(ctx, |ui| {
+            ui.with_layout(Layout::top_down_justified(egui::Align::Center), |ui| {
+                ui.heading("Error!");
+                ui.label("Application will be closed because of the error:");
+                ui.label(RichText::new(error.as_ref()).color(Color32::RED));
+                if ui.button("Ok").clicked() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            })
+        });
+    }
+
+    pub(crate) fn frame<F>(
+        ui: &mut Ui,
+        add_contents: impl FnOnce(&mut Ui) -> F,
+    ) -> InnerResponse<F> {
+        Frame::new()
+            .stroke(Stroke::new(1.5, Color32::from_white_alpha(0x20)))
+            .corner_radius(10.0)
+            .inner_margin(7.0)
+            .show(ui, add_contents)
+    }
+
+    pub(crate) fn encoder_flag<'a>(
+        ui: &mut Ui,
+        name: &str,
+        status: bool,
+        invert_color: bool,
+    ) -> Response {
+        let color = |mut cond: bool| {
+            if invert_color {
+                cond = !cond;
+            }
+            if cond {
+                Color32::GREEN
+            } else {
+                Color32::RED
+            }
+        };
+        let text = |cond| if cond { "yes" } else { "no" };
+        let mut job = LayoutJob::default();
+        job.append(&format!("{}: ", name), 0.0, TextFormat::default());
+        job.append(
+            text(status),
+            0.0,
+            TextFormat::simple(FontId::default(), color(status)),
+        );
+        ui.label(job)
+    }
+
+    pub(crate) fn alternative_value(
+        &self,
+        ctx: &Context,
+        art: impl AsRef<str>,
+        value: impl AsRef<str>,
+        list: impl Iterator<Item = impl AsRef<str>>,
+    ) -> Option<String> {
+        Modal::new(Id::new("alternative value"))
+            .show(ctx, |ui| {
+                ui.heading("Key Error");
+                ui.label(format!(
+                    "Can not find {} with name {}",
+                    art.as_ref(),
+                    value.as_ref()
+                ));
+                ui.label("please, choose an alternative:");
+                ComboBox::from_id_salt("alternative")
+                    .selected_text(&self.alternative_value)
+                    .show_ui(ui, |ui| {
+                        for name in list {
+                            let name = name.as_ref();
+                            if ui
+                                .selectable_label(name == &self.alternative_value, name)
+                                .clicked()
+                            {
+                                self.emit(FrontMessage::AlternativeValue(name.to_string()));
+                            }
+                        }
+                    });
+                if ui.button("Ok").clicked() {
+                    return Some(self.alternative_value.clone());
+                }
+                None
+            })
+            .inner
+    }
 }
