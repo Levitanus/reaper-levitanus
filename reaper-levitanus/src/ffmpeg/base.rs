@@ -16,7 +16,8 @@ use itertools::Itertools;
 use log::{debug, error};
 use rea_rs::{
     project_info::{BoundsMode, RenderMode},
-    ExtState, HasExtState, Mutable, Position, Project, Reaper, SourceOffset, Track, WithReaperPtr,
+    ExtState, HasExtState, Mutable, Position, Project, Reaper, SoloMode, SourceOffset, Track,
+    WithReaperPtr,
 };
 use serde::{Deserialize, Serialize};
 
@@ -32,25 +33,37 @@ pub struct Render {
     pub render_settings: RenderSettings,
 }
 impl Render {
-    pub fn get_render_job(&self, timeline: TimeLine) -> Result<Command, LevitanusError> {
+    pub fn get_render_job(
+        &self,
+        timeline: TimeLine,
+        master_filters: Vec<SerializedFilter>,
+    ) -> Result<Command, LevitanusError> {
         let mut id_generator = StreamId::new();
-        let master_filters = get_filters(&Reaper::get().current_project());
         let mut content = timeline.content.render(
             &self.render_settings.resolution,
             &self.render_settings.fps,
             &self.render_settings.pad_color,
             &mut id_generator,
         );
-        if let Some(f) = master_filters {
-            let master = f.into_iter().map(|f| f.ffmpeg_representation()).join(";");
+        if master_filters.len() > 0 {
+            let master = master_filters
+                .into_iter()
+                .map(|f| f.ffmpeg_representation())
+                .join(",");
             match content.filters.as_mut() {
-                Some(f) => *f += &master,
+                Some(f) => *f += &format!(",{}", master),
                 None => content.filters = Some(master),
             }
         }
 
         let mut main_seq: Vec<String> = Vec::new();
         main_seq.extend(content.inputs);
+        if self.render_settings.audio_offset != 0.0 {
+            main_seq.extend([
+                "-itsoffset".to_string(),
+                format!("{:.3}", self.render_settings.audio_offset),
+            ]);
+        }
         main_seq.extend(["-i".to_string(), format!("{}", timeline.outfile.display())]);
         if let Some(f) = content.filters {
             main_seq.push("-filter_complex".to_string());
@@ -146,6 +159,7 @@ impl TimeLineContent {
             self.content_type = Video::new(video).content_type;
             return;
         }
+        debug!("pushing video: {:#?}", video);
         let solid_start = match video.fade_in {
             None => video.timeline_position,
             Some(d) => video.timeline_position + d.into(),
@@ -154,6 +168,7 @@ impl TimeLineContent {
             None => video.timeline_end_position,
             Some(d) => video.timeline_end_position - d.into(),
         };
+        debug!("solid_start: {:?}, solid_end: {:?}", solid_start, solid_end);
         let self_left = match solid_start == self.timeline_position {
             true => None,
             false => {
@@ -168,29 +183,44 @@ impl TimeLineContent {
                 Some(right)
             }
         };
-        // debug!("self_left: {:?},\nself_right: {:?}", self_right, self_right);
+        // debug!(
+        //     "self_left: {:#?},\nself_right: {:#?}",
+        //     self_right, self_right
+        // );
         let fade_out = video.fade_out.clone();
         // debug!("fade_out: {:?}", fade_out);
         let left = match self_left {
-            None => Video::new(video),
+            None => {
+                debug!("building left, self left is None");
+                Video::new(video)
+            }
             Some(left) => match video.fade_in {
-                None => Concat::new(left, Video::new(video)),
-                Some(d) => XFade::new(left, Video::new(video), d),
+                None => {
+                    debug!("building left, video has no fade_in, applying concat");
+                    Concat::new(left, Video::new(video))
+                }
+                Some(d) => {
+                    debug!("building left, video has fade_in, applying XFade");
+                    XFade::new(left, Video::new(video), d)
+                }
             },
         };
-        // debug!("left: {:?}", left);
+        // debug!("left: {:#?}", left);
         match self_right {
             None => {
+                debug!("no self right, left is right.");
                 self.z_index = left.z_index;
                 self.content_type = left.content_type;
             }
             Some(right) => match fade_out {
                 None => {
+                    debug!("there is right, video has no fade_out, apllying Concat");
                     let content = Concat::new(left, right);
                     self.z_index = content.z_index;
                     self.content_type = content.content_type;
                 }
                 Some(d) => {
+                    debug!("there is right, video has fade_out, applying XFade");
                     let content = XFade::new(left, right, d);
                     self.z_index = content.z_index;
                     self.content_type = content.content_type;
@@ -238,10 +268,10 @@ impl TimeLineContent {
                     timeline_end_position: self.timeline_end_position,
                     z_index: self.z_index,
                 };
-                debug!(
-                    "video pos: {:?}, split pos: {:?},\nleft: {:#?},\nright: {:#?}",
-                    self.timeline_position, position, left, right
-                );
+                // debug!(
+                //     "video pos: {:?}, split pos: {:?},\nleft: {:#?},\nright: {:#?}",
+                //     self.timeline_position, position, left, right
+                // );
                 (left, right)
             }
             TimeLineContentType::Concat(concat) => {
@@ -263,17 +293,17 @@ impl TimeLineContent {
                 }
             }
             TimeLineContentType::XFade(fadex) => {
-                if position.as_duration()
-                    <= fadex.left.timeline_end_position.as_duration() - fadex.fade_duration
-                {
+                debug!("split XFade");
+                if position <= fadex.left.timeline_end_position - fadex.fade_duration.into() {
+                    debug!("xfade on the right from split position");
                     let (left, right) = fadex.left.split(position);
                     (left, XFade::new(right, *fadex.right, fadex.fade_duration))
-                } else if fadex.right.timeline_position.as_duration() + fadex.fade_duration
-                    <= position.as_duration()
-                {
+                } else if fadex.right.timeline_position + fadex.fade_duration.into() <= position {
+                    debug!("xfade on the left from split position");
                     let (left, right) = fadex.right.split(position);
-                    (XFade::new(left, *fadex.left, fadex.fade_duration), right)
+                    (XFade::new(*fadex.left, left, fadex.fade_duration), right)
                 } else {
+                    debug!("splitting in the middle of crossfade");
                     let (l_left, l_right) = fadex.left.split(position);
                     let (r_left, r_right) = fadex.right.split(position);
                     let l_d =
@@ -482,12 +512,11 @@ struct XFade {
 }
 impl XFade {
     fn new(left: TimeLineContent, right: TimeLineContent, duration: Duration) -> TimeLineContent {
+        debug!("XFade::new(left: {:#?}, right: {:#?})", left, right);
         assert_eq!(
             left.timeline_end_position - duration.into(),
             right.timeline_position,
-            "wrong duration length. left: {:#?}, right: {:#?}, duration: {:?}",
-            left,
-            right,
+            "wrong duration length. duration: {:?}",
             duration
         );
         let z_index = left.z_index.min(right.z_index);
@@ -588,10 +617,10 @@ pub fn build_render_timelines(render_settings: &RenderSettings) -> anyhow::Resul
     Ok(timelines.collect())
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd)]
 pub struct SerializedFilter {
-    name: String,
-    options: Vec<SerializedOption>,
+    pub name: String,
+    pub options: Vec<SerializedOption>,
 }
 impl Default for SerializedFilter {
     fn default() -> Self {
@@ -612,10 +641,10 @@ impl SerializedFilter {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd)]
 pub struct SerializedOption {
-    name: String,
-    value: OptionParameter,
+    pub name: String,
+    pub value: OptionParameter,
 }
 impl SerializedOption {
     pub fn ffmpeg_representation(&self) -> String {
@@ -629,17 +658,17 @@ impl SerializedOption {
     }
 }
 
-pub fn get_filters<T>(item: &T) -> Option<Vec<SerializedFilter>>
+pub fn get_filters<T>(item: &T) -> Vec<SerializedFilter>
 where
     T: HasExtState,
 {
     static EXT_KEY_FILTERS: &str = "filters";
     match ExtState::new(EXT_SECTION, EXT_KEY_FILTERS, None, PERSIST, item, None).get() {
-        Ok(filters) => filters,
+        Ok(filters) => filters.unwrap_or(Vec::new()),
 
         Err(e) => {
             error!("can not get ext state: {:?}", e);
-            None
+            Vec::new()
         }
     }
 }
@@ -652,12 +681,23 @@ where
     ExtState::new(EXT_SECTION, EXT_KEY_FILTERS, None, PERSIST, item, None).set(filters);
 }
 
+static TIMELINE_PRECISION: u32 = 1000000;
+
 fn build_timeline(render_region: RenderRegion, render_settings: RenderSettings) -> TimeLine {
     let rpr = Reaper::get();
     let pr = rpr.current_project();
-    let (start, end) = (render_region.start, render_region.end);
+    let (start, end) = (
+        render_region.start.with_precision(TIMELINE_PRECISION),
+        render_region.end.with_precision(TIMELINE_PRECISION),
+    );
     let mut timeline = TimeLine::new(render_region.file, start, end, render_settings);
     for track in pr.iter_tracks().rev() {
+        if track.muted() {
+            continue;
+        }
+        if pr.any_track_solo() && track.solo() == SoloMode::NotSoloed {
+            continue;
+        }
         let mut track = Track::<Mutable>::new(&pr, track.get());
         let track_filters = get_filters(&track);
         for idx in 0..track.n_items() {
@@ -665,10 +705,10 @@ fn build_timeline(render_region: RenderRegion, render_settings: RenderSettings) 
                 .get_item(idx)
                 .expect(&format!("can not get item with index {idx}"));
             let item_filters = get_filters(&item);
-            if item.position() >= end {
+            if item.position().with_precision(TIMELINE_PRECISION) >= end {
                 continue;
             }
-            if item.end_position() <= start {
+            if item.end_position().with_precision(TIMELINE_PRECISION) <= start {
                 continue;
             }
             if item.is_muted() {
@@ -679,37 +719,71 @@ fn build_timeline(render_region: RenderRegion, render_settings: RenderSettings) 
             if source.type_string() != "VIDEO" {
                 continue;
             }
+            debug!(
+                "timeline bounds: {:?},{:?}; item bounds: {:?},{:?}",
+                start,
+                end,
+                item.position(),
+                item.end_position()
+            );
             let file = source.filename();
             debug!("file: {:?}", file);
-            let timeline_position = if start < item.position() {
+            debug!(
+                "item position: {}, item duration: {}, item end position: {}",
+                item.position().as_duration().timestump(),
+                item.length().timestump(),
+                item.end_position().as_duration().timestump()
+            );
+            let timeline_position = if start < item.position().with_precision(TIMELINE_PRECISION) {
                 item.position() - start
             } else {
-                Position::from(0.0)
+                Position::from(0.0).with_precision(TIMELINE_PRECISION)
             };
-            debug!("timeline_position: {:?}", timeline_position);
-            let timeline_end_position = if end > item.end_position() {
-                item.end_position() - start
-            } else {
-                end - start
-            };
-            debug!("timeline_end_position: {:?}", timeline_end_position);
+            debug!(
+                "timeline_position: {:?} ({})",
+                timeline_position,
+                timeline_position.as_duration().timestump()
+            );
+            let timeline_end_position =
+                if end > item.end_position().with_precision(TIMELINE_PRECISION) {
+                    item.end_position() - start
+                } else {
+                    end - start
+                };
+            debug!(
+                "timeline_end_position: {:?} ({})",
+                timeline_end_position,
+                timeline_end_position.as_duration().timestump()
+            );
+            debug!(
+                "duration: {:?} ({})",
+                timeline_end_position - timeline_position,
+                (timeline_end_position - timeline_position)
+                    .as_duration()
+                    .timestump()
+            );
             let source_offset = if start > item.position() {
                 item.active_take().start_offset() + (start - item.position()).as_duration()
             } else {
                 item.active_take().start_offset()
             };
-            debug!("source_offset: {:?}", source_offset);
+            debug!(
+                "source_offset: {:?} ({})",
+                source_offset,
+                source_offset.timestump()
+            );
             let fade_in = item.fade_in().length;
             let fade_out = item.fade_out().length;
-            debug!("fade_in: {:?}, fade_out: {:?}", fade_in, fade_out);
+            debug!(
+                "fade_in: {:?} ({}), fade_out: {:?} ({})",
+                fade_in,
+                fade_in.timestump(),
+                fade_out,
+                fade_out.timestump()
+            );
 
-            let mut filter_chain = match item_filters {
-                Some(f) => f,
-                None => vec![SerializedFilter::default()],
-            };
-            if let Some(f) = track_filters.clone() {
-                filter_chain.extend(f);
-            }
+            let mut filter_chain = item_filters;
+            filter_chain.extend(track_filters.clone());
 
             timeline.push(VideoInput {
                 file,
@@ -732,7 +806,7 @@ fn build_timeline(render_region: RenderRegion, render_settings: RenderSettings) 
             })
         }
     }
-    debug!("{:#?}", timeline);
+    // debug!("{:#?}", timeline);
     timeline
 }
 
@@ -786,10 +860,11 @@ fn get_render_regions() -> anyhow::Result<Vec<RenderRegion>> {
             }
             BoundsMode::AllRegions => {
                 let mut bounds = Vec::new();
-                for (idx, region) in pr.iter_markers_and_regions().enumerate() {
-                    if !region.is_region {
-                        continue;
-                    }
+                for (idx, region) in pr
+                    .iter_markers_and_regions()
+                    .filter(|r| r.is_region)
+                    .enumerate()
+                {
                     let file = get_render_targets(&pr, idx)?;
 
                     bounds.push(RenderRegion {

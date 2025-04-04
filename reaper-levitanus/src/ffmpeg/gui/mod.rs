@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufRead, BufReader},
+    io::BufReader,
     path::PathBuf,
     process::{Child, Command},
     sync::{
@@ -13,24 +13,30 @@ use std::{
 
 use anyhow::Error;
 use egui::{style::ScrollStyle, ScrollArea};
-use fraction::Fraction;
+use filters_widget::{FilterChain, FlitersWidget, SelectedVideoItem};
 use log::{debug, error};
 use rea_rs::{
     socket::{self, Broadcaster, SocketHandle},
-    ControlSurface, ExtState, Project, Reaper, GUID,
+    ControlSurface, ExtState, Mutable, Project, Reaper, Track, WithReaperPtr, GUID,
 };
 use render_widget::RenderJob;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    base::TimeLine,
+    base::{get_filters, SerializedFilter, TimeLine},
     base_types::{framerate_from_video, Resolution},
-    options::{Encoder, Muxer, Opt},
-    parser::{check_parsed_paths, encoders_path, muxers_path, parse_all, ParsingProgress},
+    options::{Encoder, Muxer, Opt, ParsedFilter},
+    parser::{
+        check_parsed_paths, encoders_path, filters_path, muxers_path, parse_all, ParsingProgress,
+    },
     RenderSettings,
 };
-use crate::{ffmpeg::base::build_render_timelines, LevitanusError};
+use crate::{
+    ffmpeg::base::{build_render_timelines, set_filters},
+    LevitanusError,
+};
 
+mod filters_widget;
 mod render_settings;
 mod render_widget;
 mod small_widgets;
@@ -50,6 +56,8 @@ enum IppMessage {
     SetCurrentVideoItem(PathBuf),
     BuildRenderSequence(RenderSettings),
     RenderSequence(Vec<TimeLine>),
+    OnSelectedVideoItem(SelectedVideoItem),
+    UpdateFilters(SelectedVideoItem),
 }
 
 #[derive(Debug)]
@@ -58,6 +66,7 @@ pub struct Backend {
     sockets: Arc<Mutex<Vec<SocketHandle<IppMessage>>>>,
     broadcaster: Broadcaster,
     last_video_item_guid: Option<GUID>,
+    last_video_item_selection: bool,
 }
 impl Backend {
     pub fn new() -> anyhow::Result<Backend> {
@@ -69,6 +78,7 @@ impl Backend {
             sockets,
             broadcaster,
             last_video_item_guid: None,
+            last_video_item_selection: false,
         })
     }
     fn ext_state(pr: &Project) -> ExtState<State, Project> {
@@ -81,21 +91,6 @@ impl Backend {
             if let Some(item) = pr.iter_items().find(|it| it.guid() == guid) {
                 if let Some(source) = item.active_take().source() {
                     return Some(source.filename());
-                }
-            }
-        }
-        None
-    }
-    fn get_framerate(&self) -> Option<Fraction> {
-        if let Some(guid) = self.last_video_item_guid {
-            let rpr = Reaper::get();
-            let pr = rpr.current_project();
-            if let Some(item) = pr.iter_items().find(|it| it.guid() == guid) {
-                if let Some(source) = item.active_take().source() {
-                    let filename = source.filename();
-                    if let Ok(r) = framerate_from_video(filename) {
-                        return Some(r);
-                    }
                 }
             }
         }
@@ -124,24 +119,45 @@ impl ControlSurface for Backend {
 
         let rpr = Reaper::get();
         let mut pr = rpr.current_project();
-        if let Some(item) = pr.get_selected_item(0) {
+        if let Some(item) = pr.get_selected_item_mut(0) {
             if match self.last_video_item_guid {
                 None => true,
-                Some(guid) => item.guid() != guid,
+                Some(guid) => item.guid() != guid || self.last_video_item_selection == false,
             } {
+                self.last_video_item_selection = true;
                 if let Some(source) = item.active_take().source() {
                     if source.type_string() == "VIDEO" {
-                        self.last_video_item_guid = Some(item.guid())
+                        self.last_video_item_guid = Some(item.guid());
+                        let imm_pr = rpr.current_project();
+                        let track = Track::<Mutable>::new(&imm_pr, item.track().get());
+                        let track_name = format!("{}: {}", track.index() + 1, track.name());
+                        let track_guid = track.guid().to_string();
+                        let item_name = item.active_take().name();
+                        let item_guid = item.guid().to_string();
+                        let track_filters = get_filters(&track);
+                        let item_filters = get_filters(&item);
+                        for client in clients.iter() {
+                            client.send(IppMessage::OnSelectedVideoItem(SelectedVideoItem {
+                                track_name: track_name.clone(),
+                                track_guid: track_guid.clone(),
+                                track_filters: track_filters.clone(),
+                                item_name: item_name.clone(),
+                                item_guid: item_guid.clone(),
+                                item_filters: item_filters.clone(),
+                            }))?;
+                        }
                     }
                 }
             }
+        } else {
+            self.last_video_item_selection = false;
         }
 
         let mut shutdown = false;
 
         for client in clients.iter_mut() {
             for message in client.try_iter() {
-                debug!("server recieved a message: {:#?}", message);
+                // debug!("server recieved a message: {:#?}", message);
                 match message {
                     IppMessage::Init => client.send(IppMessage::State(
                         Self::ext_state(&pr).get()?.unwrap_or(State::default()),
@@ -164,6 +180,38 @@ impl ControlSurface for Backend {
                         client.send(IppMessage::RenderSequence(build_render_timelines(&s)?))?
                     }
                     IppMessage::RenderSequence(_) => error!("recieved render_sequence on back-end"),
+                    IppMessage::OnSelectedVideoItem(_) => {
+                        error!("recieved OnSelectedVideoItem on back-end")
+                    }
+                    IppMessage::UpdateFilters(item) => {
+                        // debug!("recieved UpdateFilters{:#?}", item);
+                        for tr_index in 0..pr.n_tracks() {
+                            // let tr_guid = GUID::from_string(item.track_guid.clone())?;
+                            // let it_guid = GUID::from_string(item.item_guid.clone())?;
+                            let mut tr = pr
+                                .get_track_mut(tr_index)
+                                .expect("no track with te given index");
+                            // debug!("trck guid: {}", tr.guid().to_string());
+                            if tr.guid().to_string() == item.track_guid {
+                                for idx in 0..tr.n_items() {
+                                    let mut tr_item = tr
+                                        .get_item(idx)
+                                        .expect(&format!("no item with index {}", idx));
+                                    // debug!("item guid: {}", tr_item.guid().to_string());
+                                    if tr_item.guid().to_string() == item.item_guid {
+                                        set_filters(&mut tr_item, item.item_filters.clone());
+                                        set_filters(&mut tr, item.track_filters.clone());
+                                        return Ok(());
+                                    }
+                                }
+                            }
+                        }
+                        return Err(LevitanusError::KeyError(
+                            "Project".to_string(),
+                            format!("track: {}, item: {}", item.track_name, item.item_name),
+                        )
+                        .into());
+                    }
                 }
             }
         }
@@ -192,6 +240,7 @@ struct State {
     json_path: PathBuf,
     render_settings: RenderSettings,
     parallel_render: bool,
+    master_filters: Vec<SerializedFilter>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -203,6 +252,7 @@ impl Default for State {
             json_path,
             render_settings: RenderSettings::default(),
             parallel_render: true,
+            master_filters: Vec::new(),
         }
     }
 }
@@ -222,6 +272,7 @@ enum FrontMessage {
     GetResolution,
     GetFrameRate,
     Render,
+    UpdateFilters(FilterChain),
 }
 
 #[derive(Debug)]
@@ -237,6 +288,8 @@ struct Front {
     alternative_value: String,
     muxers: Vec<Muxer>,
     encoders: Vec<Encoder>,
+    filters: Vec<ParsedFilter>,
+    filters_widget: FlitersWidget,
 }
 impl Front {
     fn new(gui_state: State, socket: SocketHandle<IppMessage>) -> Self {
@@ -251,6 +304,8 @@ impl Front {
             .collect();
         let encoders = Self::build_encoders_list(&gui_state.json_path, &parsing_progress)
             .expect("can not build encoders list");
+        let filters = Self::build_filters_list(&gui_state.json_path, &parsing_progress)
+            .expect("can not build filters list");
 
         let (msg_tx, msg_rx) = channel();
         Self {
@@ -265,6 +320,8 @@ impl Front {
             alternative_value: String::default(),
             muxers,
             encoders,
+            filters,
+            filters_widget: FlitersWidget::new(),
         }
     }
     fn parse(&mut self) {
@@ -302,6 +359,19 @@ impl Front {
             _ => Ok(Vec::new()),
         }
     }
+    fn build_filters_list(
+        json_path: &PathBuf,
+        progress: &ParsingProgress,
+    ) -> anyhow::Result<Vec<ParsedFilter>> {
+        match progress {
+            ParsingProgress::Result(Ok(_)) => {
+                let file = File::open(filters_path(json_path))?;
+                let reader = BufReader::new(file);
+                Ok(serde_json::from_reader(reader)?)
+            }
+            _ => Ok(Vec::new()),
+        }
+    }
     fn poll_messages(&mut self) -> anyhow::Result<()> {
         for msg in self.msg_rx.try_iter().collect::<Vec<FrontMessage>>() {
             match msg {
@@ -328,6 +398,24 @@ impl Front {
                 FrontMessage::Render => self.socket.send(IppMessage::BuildRenderSequence(
                     self.state.render_settings.clone(),
                 ))?,
+                FrontMessage::UpdateFilters(chain) => {
+                    // debug!("FrontMessage::UpdateFilters({:#?}) ", chain);
+                    match chain {
+                        FilterChain::Item | FilterChain::Track => {
+                            match &self.filters_widget.selected_video_item {
+                                Some(i) => {
+                                    self.socket.send(IppMessage::UpdateFilters(i.clone()))?
+                                }
+                                None => self.emit(FrontMessage::Error(
+                                    "empty selected video item on update filters".to_string(),
+                                )),
+                            }
+                        }
+                        FilterChain::Master => {
+                            self.socket.send(IppMessage::State(self.state.clone()))?
+                        }
+                    }
+                }
             }
         }
         if let Some(rx) = &self.parser_channel {
@@ -355,6 +443,12 @@ impl Front {
                 }
                 IppMessage::SetCurrentVideoItem(file) => {
                     error!("recieved SetCurrentVideoItem({:?}) in polling", file)
+                }
+                IppMessage::OnSelectedVideoItem(item) => {
+                    self.filters_widget.selected_video_item = Some(item)
+                }
+                IppMessage::UpdateFilters(i) => {
+                    error!("recieved UpdateFilters({:?}) in polling", i)
                 }
             }
         }
@@ -385,22 +479,23 @@ impl eframe::App for Front {
         }
         egui::TopBottomPanel::bottom("footer").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                self.widget_parser(ctx, ui);
                 self.widget_render(ctx, ui);
+                ui.separator();
+                self.widget_parser(ctx, ui);
             });
         });
         egui::CentralPanel::default().show(ctx, |ui| {
             ScrollArea::both()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    self.widget_filters(ctx, ui);
                     self.widget_render_settings(ctx, ui);
-                    // self.widget_render(ctx, ui);
                 });
         });
         ctx.request_repaint_after(Duration::from_millis(200));
     }
     fn save(&mut self, _storage: &mut dyn eframe::Storage) {
-        debug!("on save ()");
+        // debug!("on save ()");
         match self.socket.send(IppMessage::State(self.state.clone())) {
             Ok(()) => (),
             Err(e) => {
@@ -416,15 +511,22 @@ pub fn front() -> anyhow::Result<()> {
     let native_options = eframe::NativeOptions::default();
     let socket = socket::spawn_client(SOCKET_ADDRESS)?;
     socket.send(IppMessage::Init)?;
-    let state = match socket.recv()? {
-        IppMessage::State(s) => s,
-        msg => {
-            return Err(LevitanusError::FrontInitialization(format!(
-                "Recieved another message instead of front initialization state: {:?}",
-                msg
-            ))
-            .into())
+    let state = {
+        let mut state: Result<State, LevitanusError> = Err(LevitanusError::FrontInitialization(
+            "did't recieved any message from back-end".to_owned(),
+        ));
+        for msg in socket.iter() {
+            if let IppMessage::State(s) = msg {
+                state = Ok(s);
+                break;
+            } else {
+                state = Err(LevitanusError::FrontInitialization(format!(
+                    "Recieved another message instead of front initialization state: {:?}",
+                    msg
+                )));
+            }
         }
+        state?
     };
     debug!("state is: {:#?}", state);
     let app = Front::new(state, socket);

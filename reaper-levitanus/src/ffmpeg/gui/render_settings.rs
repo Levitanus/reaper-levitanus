@@ -128,7 +128,7 @@ impl Front {
                 ui.separator();
                 self.widget_small_render_settings(ui);
                 CollapsingHeader::new("muxer options").show_unindented(ui, |ui| {
-                    Self::options_wrapper(
+                    Self::widget_options_wrapper(
                         ui,
                         "muxer",
                         &mut self.state.render_settings.muxer_options,
@@ -136,7 +136,7 @@ impl Front {
                     );
                 });
                 CollapsingHeader::new("video encoder options").show_unindented(ui, |ui| {
-                    Self::options_wrapper(
+                    Self::widget_options_wrapper(
                         ui,
                         "video encoder",
                         &mut self.state.render_settings.video_encoder_options,
@@ -145,7 +145,7 @@ impl Front {
                 });
                 if let Some(enc) = &current_audio_encoder {
                     CollapsingHeader::new("audio encoder options").show_unindented(ui, |ui| {
-                        Self::options_wrapper(
+                        Self::widget_options_wrapper(
                             ui,
                             "audio encoder",
                             &mut self.state.render_settings.audio_encoder_options,
@@ -155,7 +155,7 @@ impl Front {
                 }
                 if let Some(enc) = &current_subtitle_encoder {
                     CollapsingHeader::new("subtitle encoder options").show_unindented(ui, |ui| {
-                        Self::options_wrapper(
+                        Self::widget_options_wrapper(
                             ui,
                             "subtitle encoder",
                             &mut self.state.render_settings.subtitle_encoder_options,
@@ -164,7 +164,6 @@ impl Front {
                     });
                 }
             });
-        ui.label("bottom");
     }
 
     fn widget_small_render_settings(&mut self, ui: &mut Ui) {
@@ -281,7 +280,12 @@ impl Front {
                                 let c = c.replace("h264", "libx264").replace("flv1", "flv");
                                 self.state.render_settings.video_encoder = c;
                             }
-                            self.state.render_settings.audio_encoder = mux.audio_codec.clone();
+                            if let Some(c) = &mux.audio_codec {
+                                let c = c.replace("vorbis", "libvorbis");
+                                self.state.render_settings.audio_encoder = Some(c);
+                            } else {
+                                self.state.render_settings.audio_encoder = None;
+                            }
                             self.state.render_settings.subtitle_encoder =
                                 mux.subtitle_codec.clone();
                             if let Some(ext) = mux.extensions.as_ref() {
@@ -404,6 +408,13 @@ impl Front {
                     }
                 });
             ui.label(&current_encoder.description);
+            ui.horizontal(|ui| {
+                let desc = "audio offset in seconds";
+                ui.label(RichText::new("audio offset").strong())
+                    .on_hover_text(desc);
+                ui.add(DragValue::new(&mut self.state.render_settings.audio_offset))
+                    .on_hover_text(desc);
+            });
         });
         // });
     }
@@ -435,12 +446,12 @@ impl Front {
         // });
     }
 
-    fn options_wrapper(
+    pub fn widget_options_wrapper(
         ui: &mut Ui,
         id: &str,
         assigned_options: &mut Vec<Opt>,
         full_options: Vec<Opt>,
-    ) {
+    ) -> bool {
         let mut options: Vec<Opt> = full_options
             .into_iter()
             .map(|opt| {
@@ -452,13 +463,15 @@ impl Front {
                 opt
             })
             .collect();
-        Self::widget_options(ui, id, &mut options);
+        let result = Self::widget_options(ui, id, &mut options);
         *assigned_options = options
             .into_iter()
             .filter(|opt| opt.parameter.is_assigned())
             .collect();
+        result
     }
-    fn widget_options(ui: &mut Ui, id: &str, options: &mut Vec<Opt>) {
+    fn widget_options(ui: &mut Ui, id: &str, options: &mut Vec<Opt>) -> bool {
+        let mut updated = false;
         ui.push_id(&id, |ui|{
             ScrollArea::vertical()
             .max_height(300.0).auto_shrink([false,true])
@@ -472,6 +485,7 @@ impl Front {
                     .spacing((10.0, 10.0))
                     .show(ui, |ui| {
                         for opt in options {
+                            let old_opt = opt.clone();
                             ui.vertical(|ui| {
                                 ui.label(RichText::new(opt.name.clone()).strong());
                                 ui.label(RichText::new(opt.description.clone()).weak());
@@ -868,11 +882,15 @@ impl Front {
                                 }
                             };
                             ui.end_row();
+                            if opt != &old_opt{
+                                updated = true;
+                            }
                         }
                     });
                 ui.set_height(ui.available_height());
             });
         });
+        updated
     }
 }
 

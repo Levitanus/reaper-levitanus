@@ -7,15 +7,17 @@ use std::{
     time::Duration,
 };
 
-use egui::{Color32, Context, Id, Modal, ProgressBar, RichText, Ui};
+use egui::{Area, Color32, Context, Id, Modal, ProgressBar, RichText, ScrollArea, Ui};
+use itertools::Itertools;
 use lazy_static::lazy_static;
-use log::debug;
+use log::{debug, error};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     ffmpeg::{
         base::{Render, TimeLine},
+        base_types::Timestamp,
         options::DurationUnit,
     },
     LevitanusError,
@@ -41,7 +43,7 @@ impl RenderRegex {
             frame: Regex::new(r"frame=(\d+)").expect("frame regex not compiled"),
             fps: Regex::new(r"fps=([\d.]+)").expect("fps regex not compiled"),
             time: Regex::new(r"out_time=([\d\.:]+)").expect("time regex not compiled"),
-            speed: Regex::new(r"speed=\s*(\w+)").expect("speed regex not compiled"),
+            speed: Regex::new(r"speed=\s*(\S+)").expect("speed regex not compiled"),
             progress: Regex::new(r"progress=(\w+)").expect("progress regex not compiled"),
         }
     }
@@ -73,13 +75,21 @@ pub struct RenderJob {
     pub duration: Duration,
     pub progress: RenderProgress,
     pub last_status: RenderStatus,
+    pub show_script: bool,
+    pub render_script: String,
     pub reciever: Option<Receiver<RenderMessage>>,
     pub sender: Option<Sender<RenderMessage>>,
+    pub error_log: String,
 }
 impl RenderJob {
     pub fn poll(&mut self) -> Result<(), LevitanusError> {
         if let Some(recv) = &self.reciever {
             for msg in recv.try_iter() {
+                // debug!(
+                //     "client for {:?}, polled message: {:?}",
+                //     self.filename.file_name(),
+                //     msg
+                // );
                 match msg {
                     RenderMessage::Frame(frame) => self.last_status.frame = frame,
                     RenderMessage::Fps(fps) => self.last_status.fps = fps,
@@ -96,6 +106,9 @@ impl RenderJob {
                             Err(e) => self.progress = RenderProgress::Result(Err(e.clone())),
                             Ok(p) => {
                                 if p == "end" {
+                                    if let RenderProgress::Result(Err(_)) = &self.progress {
+                                        return Ok(());
+                                    }
                                     self.progress = RenderProgress::Result(Ok(()))
                                 }
                             }
@@ -103,12 +116,25 @@ impl RenderJob {
                         self.last_status.progress = p;
                     }
                     RenderMessage::Stop => (),
-                    RenderMessage::Err(e) => match &mut self.progress {
-                        RenderProgress::Result(Err(old_e)) => {
-                            self.progress = RenderProgress::Result(Err(format!("{}\n{}", old_e, e)))
+                    RenderMessage::Err(e) => {
+                        match &mut self.progress {
+                            RenderProgress::Result(Err(old_e)) => {
+                                self.progress =
+                                    RenderProgress::Result(Err(format!("{}\n{}", old_e, e)))
+                            }
+                            _ => self.progress = RenderProgress::Result(Err(e)),
+                        };
+                        if let Some(s) = &self.sender {
+                            s.send(RenderMessage::Stop)
+                                .map_err(|err| LevitanusError::Render(format!("{}", err)))?;
                         }
-                        _ => self.progress = RenderProgress::Result(Err(e)),
-                    },
+                    }
+                    RenderMessage::LogError(s) => {
+                        self.error_log.push_str(&format!("{}\n", s));
+                        if s.contains("Error") {
+                            self.progress = RenderProgress::Result(Err(s))
+                        }
+                    }
                 }
             }
         }
@@ -137,6 +163,7 @@ pub enum RenderMessage {
     Progress(Result<String, String>),
     Stop,
     Err(String),
+    LogError(String),
 }
 impl RenderMessage {
     pub fn from_string(line: String) -> Option<Self> {
@@ -191,22 +218,28 @@ impl Front {
         for tl in render_queue {
             let (sender, reciever) = channel();
             let (thread_s, thread_r) = channel();
+            let filename = tl
+                .outfile
+                .with_extension(&self.state.render_settings.extension)
+                .clone();
+            let duration = tl.duration();
+            let renderer = Render {
+                render_settings: self.state.render_settings.clone(),
+            };
+            let mut ffmpeg = renderer.get_render_job(tl, self.state.master_filters.clone())?;
+            let render_script = format!("{:?}", ffmpeg);
             let job = RenderJob {
-                filename: tl
-                    .outfile
-                    .with_extension(&self.state.render_settings.extension)
-                    .clone(),
-                duration: tl.duration(),
+                filename,
+                duration,
                 last_status: RenderStatus::default(),
                 progress: RenderProgress::Progress(0.0),
                 reciever: Some(reciever),
                 sender: Some(thread_s),
                 show_error: false,
+                show_script: false,
+                render_script,
+                error_log: String::default(),
             };
-            let renderer = Render {
-                render_settings: self.state.render_settings.clone(),
-            };
-            let mut ffmpeg = renderer.get_render_job(tl)?;
             self.render_jobs.push(job);
             spawn(move || {
                 ffmpeg.stdout(Stdio::piped());
@@ -219,10 +252,23 @@ impl Front {
                         return;
                     }
                 };
-                let stdout = child.stdout.take().expect("handle present");
-                let buf_reader = BufReader::new(stdout);
-                for line in buf_reader.lines() {
+                // debug!("{:?}", child.wait_with_output());
+                let stout_reader = BufReader::new(child.stdout.take().expect("handle present"));
+                let stderr_reader = BufReader::new(child.stderr.take().expect("handle present"));
+                let sender_clone = sender.clone();
+                let thread = spawn(move || {
+                    for line in stderr_reader.lines() {
+                        if let Ok(s) = line {
+                            debug!("stderr msg: {:?}", s);
+                            sender_clone
+                                .send(RenderMessage::LogError(s))
+                                .expect("can not send eror log");
+                        }
+                    }
+                });
+                for line in stout_reader.lines() {
                     if let Ok(msg) = thread_r.try_recv() {
+                        debug!("recieved render message: {:?}", msg);
                         match msg {
                             RenderMessage::Stop => {
                                 child.kill().expect("can not kill child ffmpeg");
@@ -232,27 +278,17 @@ impl Front {
                         }
                     }
                     if let Ok(line) = line {
+                        debug!("line from child ffmpeg: {:?}", line);
                         if let Some(msg) = RenderMessage::from_string(line) {
                             if let Err(e) = sender.send(msg) {
+                                error!("Can not send render message: {:?}", e);
                                 child.kill().ok();
                                 panic!("{:?}", e);
                             };
                         }
                     }
                 }
-                if let Some(stderr) = child.stderr {
-                    let buf_reader = BufReader::new(stderr);
-                    for line in buf_reader.lines() {
-                        if let Ok(s) = line {
-                            debug!("error string: {}", s);
-                            if s.starts_with("Error") {
-                                sender
-                                    .send(RenderMessage::Err(s))
-                                    .expect("can not send error message");
-                            }
-                        }
-                    }
-                }
+                thread.join().expect("error on join");
             });
         }
         Ok(())
@@ -261,7 +297,7 @@ impl Front {
     pub(crate) fn widget_render(&mut self, ctx: &Context, ui: &mut Ui) {
         Self::frame(ui, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("render").clicked() {
+                if ui.button(RichText::new("render").strong()).clicked() {
                     self.emit(FrontMessage::Render);
                 }
                 ui.checkbox(&mut self.state.parallel_render, "render files parallel");
@@ -286,7 +322,19 @@ impl Front {
                         };
                         Self::frame(ui, |ui| {
                             ui.label(job.filename.to_string_lossy());
-                            ui.label(status);
+                            if ui.button("show render script").clicked() {
+                                job.show_script = true;
+                            }
+                            ui.horizontal(|ui| {
+                                ui.label(status);
+                                ui.separator();
+                                ui.label(format!("fps: {}", job.last_status.fps));
+                                ui.label(format!("speed: {}", job.last_status.speed));
+                                ui.label(format!(
+                                    "time: {}",
+                                    job.last_status.time.as_duration().timestump()
+                                ));
+                            });
                             match error {
                                 None => {
                                     ui.add(ProgressBar::new(progress));
@@ -299,8 +347,17 @@ impl Front {
                                         Modal::new(Id::new(job.filename.to_string_lossy())).show(
                                             ctx,
                                             |ui| {
+                                                ui.set_max_height(
+                                                    ctx.available_rect().height() - 100.0,
+                                                );
                                                 ui.heading("render error");
-                                                ui.label(e);
+                                                ui.label(RichText::new(e).strong());
+                                                ScrollArea::vertical()
+                                                    .max_height(ui.available_height() - 100.0)
+                                                    .show(ui, |ui| {
+                                                        ui.heading("error log:");
+                                                        ui.label(&job.error_log);
+                                                    });
                                                 if ui.button("close").clicked() {
                                                     job.show_error = false;
                                                 }
@@ -309,8 +366,22 @@ impl Front {
                                     }
                                 }
                             }
+                            if job.show_script {
+                                Modal::new(Id::new("render script")).show(ctx, |ui| {
+                                    ui.set_max_height(ctx.available_rect().height() - 100.0);
+                                    ScrollArea::vertical()
+                                        .max_height(ui.available_height() - 100.0)
+                                        .show(ui, |ui| {
+                                            ui.label(&job.render_script);
+                                        });
+                                    if ui.button("close").clicked() {
+                                        job.show_script = false
+                                    }
+                                });
+                            }
                         });
                     }
+
                     match overal_progress {
                         true => {
                             if ui.button("stop").clicked() {
@@ -327,7 +398,7 @@ impl Front {
                                 self.render_jobs.clear();
                             }
                         }
-                    }
+                    };
                 });
             }
         });

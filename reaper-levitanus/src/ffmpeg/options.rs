@@ -61,7 +61,7 @@ pub struct Opt {
     pub default: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd)]
 pub enum OptionParameter {
     Int(Option<i32>),
     String(Option<String>),
@@ -312,7 +312,7 @@ impl Default for PixelFormat {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, PartialOrd, Clone)]
 pub enum DurationUnit {
     Seconds(f64),
     Milliseconds(i32),
@@ -362,7 +362,7 @@ impl DurationUnit {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, PartialOrd, Clone)]
 pub struct FfmpegColor {
     pub color: u32,
     pub alpha: u8,

@@ -3,6 +3,7 @@ use std::{fmt::Display, path::PathBuf, process::Command, time::Duration};
 use fraction::Fraction;
 use lazy_static::lazy_static;
 use log::debug;
+use rea_rs::SourceOffset;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +35,7 @@ pub struct RenderSettings {
     pub pixel_format: String,
     pub resolution: Resolution,
     pub pad_color: FfmpegColor,
+    pub audio_offset: f64,
 }
 impl Default for RenderSettings {
     fn default() -> Self {
@@ -51,6 +53,7 @@ impl Default for RenderSettings {
             pixel_format: "yuv420p".to_string(),
             resolution: Resolution::default(),
             pad_color: FfmpegColor::new(0, 0xff),
+            audio_offset: 0.0,
         }
     }
 }
@@ -153,9 +156,9 @@ impl Timestamp for Duration {
     fn timestump(&self) -> String {
         let hours = self.as_secs() / 60 / 60;
         let mins = self.as_secs() / 60;
-        let secs = self.as_secs();
+        let secs = self.as_secs() % 60;
         let millis = self.subsec_millis();
-        format!("{hours}:{mins}:{secs}.{millis}")
+        format!("{hours}:{mins}:{secs}.{millis:03}")
     }
 }
 impl Timestamp for rea_rs::SourceOffset {
@@ -164,7 +167,7 @@ impl Timestamp for rea_rs::SourceOffset {
         let hours = delta.num_hours();
         let mins = delta.num_minutes() % 60;
         let secs = delta.num_seconds() % 60;
-        let millis = delta.subsec_nanos();
-        format!("{hours}:{mins}:{secs}.{millis}")
+        let millis = delta.subsec_nanos() / 1000000;
+        format!("{hours}:{mins}:{secs}.{millis:03}")
     }
 }
