@@ -12,5 +12,7 @@ Currently adds actions:
 - Take Pitch envelope snap *
     * Set snap for pitch envelope, or make it default, or turn off
 - Set Take pitch envelope range
-- render project video
-    * builds render script for ffmpeg, that renders video items respect to current render settings. For now in early alpha stage.
+- ffmpeg gui
+    * opens dialog for setting up filters , settings and rendering project video with FFMPEG. 
+    * For now in early alpha stage.
+    * the better to work with ffmpeg dialog, while running Reaper from command line \ terminal with a command: `RUST_LOG=error,reaper_levitanus=debug RUST_BACKTRACE=1 reaper`. It will produce a lot of helpful debug information.

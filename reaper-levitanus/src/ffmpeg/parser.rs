@@ -1,18 +1,21 @@
 use std::{
-    collections::HashMap, error::Error, ffi::OsStr, fs::OpenOptions, io::Write, path::PathBuf,
+    error::Error,
+    ffi::OsStr,
+    fs::OpenOptions,
+    io::Write,
+    path::PathBuf,
     process::Command,
+    sync::mpsc::{SendError, Sender},
 };
 
 use lazy_static::lazy_static;
 use log::info;
 use path_absolutize::Absolutize;
-use rea_rs::Timer;
-use reaper_imgui::{Context, ImGui};
 use regex::Regex;
 
-use crate::ffmpeg::options::{Encoder, EncoderType, ParsedFilter};
-
-use super::options::{Muxer, Opt, OptionParameter};
+use super::options::{
+    Encoder, EncoderType, Muxer, Opt, OptionParameter, ParsedFilter, PixelFormat,
+};
 
 lazy_static! {
     static ref OPT_RE: Regex =
@@ -32,50 +35,81 @@ lazy_static! {
         Regex::new(r"^(?:[\w&&[^A-Z]]\w*)[\s\d]+[\.\w]\s(?<description>\w.+)")
             .expect("can not compile opts enum regex");
 }
+static PARSER_STEP: f32 = 0.001;
 
-struct ParserGui {
-    _imgui: ImGui,
-    ctx: Context,
-}
-impl ParserGui {
-    fn new(imgui: ImGui, ctx: Context) -> Self {
-        Self { _imgui: imgui, ctx }
-    }
-}
-impl Timer for ParserGui {
-    fn run(&mut self) -> Result<(), Box<dyn Error>> {
-        todo!()
-    }
-
-    fn id_string(&self) -> String {
-        "ffmpeg_parser".to_string()
-    }
-}
-
-pub fn parse_all(out_dir: PathBuf) -> Result<(), Box<dyn Error>> {
-    parse_muxers(muxers_path(&out_dir))?;
-    parse_encoders(encoders_path(&out_dir))?;
-    parse_filters(filters_path(&out_dir))?;
+pub fn parse_all(
+    out_dir: PathBuf,
+    sender: impl Into<Option<Sender<ParsingProgress>>>,
+) -> Result<(), Box<dyn Error>> {
+    let mut sender: Option<Sender<ParsingProgress>> = sender.into();
+    let mut progress = 0.0;
+    if let Err(e) = parse_muxers(muxers_path(&out_dir), &mut progress, &mut sender) {
+        send_progress(ParsingProgress::Result(Err(e.to_string())), &mut sender)?;
+        return Err(e);
+    };
+    progress = 0.25;
+    if let Err(e) = parse_encoders(encoders_path(&out_dir), &mut progress, &mut sender) {
+        send_progress(ParsingProgress::Result(Err(e.to_string())), &mut sender)?;
+        return Err(e);
+    };
+    progress = 0.5;
+    if let Err(e) = parse_filters(filters_path(&out_dir), &mut progress, &mut sender) {
+        send_progress(ParsingProgress::Result(Err(e.to_string())), &mut sender)?;
+        return Err(e);
+    };
+    progress = 0.9;
+    if let Err(e) = parse_pix_fmts(pix_fmts_path(&out_dir), &mut progress, &mut sender) {
+        send_progress(ParsingProgress::Result(Err(e.to_string())), &mut sender)?;
+        return Err(e);
+    };
+    send_progress(ParsingProgress::Result(Ok(())), &mut sender)?;
     Ok(())
 }
 pub fn check_parsed_paths(out_dir: PathBuf) -> bool {
     muxers_path(&out_dir).exists()
         && encoders_path(&out_dir).exists()
         && filters_path(&out_dir).exists()
+        && pix_fmts_path(&out_dir).exists()
 }
-fn muxers_path(out_dir: &PathBuf) -> PathBuf {
+pub fn muxers_path(out_dir: &PathBuf) -> PathBuf {
     out_dir.join("muxers.json")
 }
 
-fn encoders_path(out_dir: &PathBuf) -> PathBuf {
+pub fn encoders_path(out_dir: &PathBuf) -> PathBuf {
     out_dir.join("encoders.json")
 }
 
-fn filters_path(out_dir: &PathBuf) -> PathBuf {
+pub fn filters_path(out_dir: &PathBuf) -> PathBuf {
     out_dir.join("filters.json")
 }
 
-fn parse_muxers(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
+pub fn pix_fmts_path(out_dir: &PathBuf) -> PathBuf {
+    out_dir.join("pix_fmts.json")
+}
+
+fn inc_progress(
+    progress: &mut f32,
+    sender: &mut Option<Sender<ParsingProgress>>,
+) -> Result<(), SendError<ParsingProgress>> {
+    *progress += PARSER_STEP;
+    send_progress(ParsingProgress::Progress(progress.clone()), sender)
+}
+
+fn send_progress(
+    progress: ParsingProgress,
+    sender: &mut Option<Sender<ParsingProgress>>,
+) -> Result<(), SendError<ParsingProgress>> {
+    match sender {
+        Some(s) => s.send(progress),
+        None => Ok(()),
+    }
+}
+
+fn parse_muxers(
+    out_file: PathBuf,
+    progress: &mut f32,
+    sender: &mut Option<Sender<ParsingProgress>>,
+) -> Result<(), Box<dyn Error>> {
     let string = output_with_args(["-muxers"])?;
     let lines = string.lines();
     let mux_re = Regex::new(r"\s.*E\s+(?<name>\w+)\s+(?<description>\w.*)")?;
@@ -94,6 +128,7 @@ fn parse_muxers(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
         let name = cap["name"].to_string();
         let description = cap["description"].to_string();
         info!("Parsing muxer '{name}'");
+        inc_progress(progress, sender)?;
 
         let info_string = output_with_args(["-h", &format!("muxer={name}")])?;
         let mut extensions = None;
@@ -112,7 +147,7 @@ fn parse_muxers(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
                         extensions = Some(
                             cap[1]
                                 .to_string()
-                                .split(", ")
+                                .split(",")
                                 .map(|s| s.to_string())
                                 .collect(),
                         );
@@ -153,7 +188,7 @@ fn parse_muxers(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
         };
         muxers.push(muxer);
     }
-    let muxers_string: String = serde_json::to_string(&muxers)?;
+    let muxers_string: String = serde_json::to_string_pretty(&muxers)?;
     info!(
         "\ndamping muxers to the file: {}\n",
         out_file.absolutize()?.display()
@@ -163,7 +198,11 @@ fn parse_muxers(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn parse_encoders(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
+fn parse_encoders(
+    out_file: PathBuf,
+    progress: &mut f32,
+    sender: &mut Option<Sender<ParsingProgress>>,
+) -> Result<(), Box<dyn Error>> {
     let string = output_with_args(["-encoders"])?;
     let lines = string.lines();
     let enc_re = Regex::new(r"^(?<flags>[\w\.]{6})\s(?<name>\w+)\s+(?<description>\w.*)")?;
@@ -180,6 +219,7 @@ fn parse_encoders(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
         let name = cap["name"].to_string();
         let description = cap["description"].to_string();
         info!("Parsing encoder '{name}'");
+        inc_progress(progress, sender)?;
 
         let info_string = output_with_args(["-h", &format!("encoder={name}")])?;
         let mut info = Vec::new();
@@ -215,7 +255,7 @@ fn parse_encoders(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
             'D' => true,
             _ => false,
         };
-        let mut pixel_formats = None;
+        let mut pixel_formats: Option<Vec<String>> = None;
 
         let mut options: Vec<Opt> = Vec::new();
         let mut parse_flow = ParseFlow::Info;
@@ -241,7 +281,7 @@ fn parse_encoders(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
             name,
             description,
             info: info.join("\n"),
-            pixel_formats,
+            supported_pixel_formats: pixel_formats,
             encoder_type,
             frame_level_multithreading,
             slice_level_multithreading,
@@ -252,7 +292,7 @@ fn parse_encoders(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
         };
         encoders.push(encoder);
     }
-    let encoders_string: String = serde_json::to_string(&encoders)?;
+    let encoders_string: String = serde_json::to_string_pretty(&encoders)?;
     info!(
         "\ndamping encoders to the file: {}\n",
         out_file.absolutize()?.display()
@@ -262,7 +302,11 @@ fn parse_encoders(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn parse_filters(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
+fn parse_filters(
+    out_file: PathBuf,
+    progress: &mut f32,
+    sender: &mut Option<Sender<ParsingProgress>>,
+) -> Result<(), Box<dyn Error>> {
     let string = output_with_args(["-filters"])?;
     let lines = string.lines();
     let filter_re = Regex::new(
@@ -293,6 +337,7 @@ fn parse_filters(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
             continue;
         }
         info!("Parsing filter '{name}'");
+        inc_progress(progress, sender)?;
 
         let info_string = output_with_args(["-h", &format!("filter={name}")])?;
         let mut info = Vec::new();
@@ -355,7 +400,78 @@ fn parse_filters(out_file: PathBuf) -> Result<(), Box<dyn Error>> {
         };
         filters.push(filter);
     }
-    let filters_string: String = serde_json::to_string(&filters)?;
+    let filters_string: String = serde_json::to_string_pretty(&filters)?;
+    info!(
+        "\ndamping filters_string to the file: {}\n",
+        out_file.absolutize()?.display()
+    );
+    let mut f = OpenOptions::new().write(true).create(true).open(out_file)?;
+    f.write_all(filters_string.as_bytes())?;
+    Ok(())
+}
+
+fn parse_pix_fmts(
+    out_file: PathBuf,
+    progress: &mut f32,
+    sender: &mut Option<Sender<ParsingProgress>>,
+) -> Result<(), Box<dyn Error>> {
+    let string = output_with_args(["-pix_fmts"])?;
+    let lines = string.lines();
+    let pix_fmt_re = Regex::new(
+        r"^(?<flags>[\w\.]{5})\s(?<name>\w+)\s+(?<nb_components>\d)\s+(?<bits_per_pixel>\d+)\s+(?<bit_depth>[\d-]+)",
+    )?;
+
+    let mut pix_fmts = Vec::new();
+    info!("collecting pixel format...");
+    for mut line in lines {
+        line = line.trim();
+        let Some(cap) = pix_fmt_re.captures(line) else {
+            continue;
+        };
+        let name = cap["name"].to_string();
+        info!("Parsing pixel format '{name}'");
+        inc_progress(progress, sender)?;
+
+        let flags_string = cap["flags"].to_string();
+        let mut flags = flags_string.chars();
+        let input_support = match flags.next().ok_or("can not read a char")? {
+            'I' => true,
+            _ => false,
+        };
+        let output_support = match flags.next().ok_or("can not read a char")? {
+            'O' => true,
+            _ => false,
+        };
+        let hardware_accelerated = match flags.next().ok_or("can not read a char")? {
+            'H' => true,
+            _ => false,
+        };
+        let paletted = match flags.next().ok_or("can not read a char")? {
+            'P' => true,
+            _ => false,
+        };
+        let bitstream = match flags.next().ok_or("can not read a char")? {
+            'B' => true,
+            _ => false,
+        };
+        let nb_components: u8 = cap["nb_components"].parse()?;
+        let bits_per_pixel: u8 = cap["bits_per_pixel"].parse()?;
+        let bit_depth = cap["bit_depth"].to_string();
+
+        let pix_format = PixelFormat {
+            name,
+            input_support,
+            output_support,
+            hardware_accelerated,
+            paletted,
+            bitstream,
+            nb_components,
+            bits_per_pixel,
+            bit_depth,
+        };
+        pix_fmts.push(pix_format);
+    }
+    let filters_string: String = serde_json::to_string_pretty(&pix_fmts)?;
     info!(
         "\ndamping filters_string to the file: {}\n",
         out_file.absolutize()?.display()
@@ -370,20 +486,23 @@ fn parse_option(line: &str, mut options: &mut Vec<Opt>) -> Result<ParseFlow, Box
         return parse_enum(line, &mut options);
     };
     let parameter = match &cap["type"] {
-        "int" => OptionParameter::Int,
-        "int64" => OptionParameter::Int,
-        "string" => OptionParameter::String,
-        "float" => OptionParameter::Float,
-        "double" => OptionParameter::Float,
-        "boolean" => OptionParameter::Bool,
-        "binary" => OptionParameter::Binary,
-        "rational" => OptionParameter::Rational,
-        "duration" => OptionParameter::Duration,
-        "dictionary" => OptionParameter::Dictionary,
-        "color" => OptionParameter::Color,
-        "image_size" => OptionParameter::ImageSize,
-        "video_rate" => OptionParameter::FrameRate,
-        "flags" => OptionParameter::Flags(HashMap::new()),
+        "int" => OptionParameter::Int(None),
+        "int64" => OptionParameter::Int(None),
+        "string" => OptionParameter::String(None),
+        "float" => OptionParameter::Float(None),
+        "double" => OptionParameter::Float(None),
+        "boolean" => OptionParameter::Bool(None),
+        "binary" => OptionParameter::Binary(None),
+        "rational" => OptionParameter::Rational(None),
+        "duration" => OptionParameter::Duration(None),
+        "dictionary" => OptionParameter::Dictionary(None),
+        "color" => OptionParameter::Color(None),
+        "image_size" => OptionParameter::ImageSize(None),
+        "video_rate" => OptionParameter::FrameRate(None),
+        "flags" => OptionParameter::Flags {
+            items: Vec::new(),
+            selected: None,
+        },
         t => return Err(format!("unknown type: {t}. The line was: {line}").into()),
     };
     let default = if let Some(cap) = OPT_RE_DEFAULT.find(line) {
@@ -407,7 +526,7 @@ fn parse_enum(line: &str, options: &mut Vec<Opt>) -> Result<ParseFlow, Box<dyn E
     if OPT_RE.captures(line).is_some() {
         return Ok(ParseFlow::Opt);
     }
-    let description = match OPT_ENUM_RE_DESC.find(line) {
+    let _description = match OPT_ENUM_RE_DESC.find(line) {
         Some(d) => d.as_str().to_string(),
         None => "".to_string(),
     };
@@ -415,22 +534,32 @@ fn parse_enum(line: &str, options: &mut Vec<Opt>) -> Result<ParseFlow, Box<dyn E
         .last_mut()
         .ok_or(format!("options are empty, line is {line}"))?;
     let new_par = match &mut last.parameter {
-        OptionParameter::Flags(hm) => {
-            hm.insert(cap["name"].to_string(), description);
+        OptionParameter::Flags { items, selected: _ } => {
+            items.push(cap["name"].to_string());
             None
         }
-        OptionParameter::Enum(hm) => {
-            hm.insert(cap["name"].to_string(), description);
+        OptionParameter::Enum {
+            items,
+            selected_idx: _,
+        } => {
+            items.push(cap["name"].to_string());
             None
         }
-        OptionParameter::Int => {
-            let map = HashMap::from_iter([(cap["name"].to_string(), description)]);
-            Some(OptionParameter::Enum(map))
+        OptionParameter::Int(_) => {
+            let vec = vec![cap["name"].to_string()];
+            Some(OptionParameter::Enum {
+                items: vec,
+                selected_idx: None,
+            })
         }
-        OptionParameter::String => {
-            let map = HashMap::from_iter([(cap["name"].to_string(), description)]);
-            Some(OptionParameter::Enum(map))
+        OptionParameter::String(_) => {
+            let vec = vec![cap["name"].to_string()];
+            Some(OptionParameter::Enum {
+                items: vec,
+                selected_idx: None,
+            })
         }
+        OptionParameter::Bool(_) => None,
         p => {
             return Err(format!(
                 "Can not convert option parameter to enum: {:?}. The line was: {line}",
@@ -462,10 +591,17 @@ fn output_with_args(
     Ok(string)
 }
 
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub enum ParsingProgress {
+    Progress(f32),
+    Result(Result<(), String>),
+    Unparsed,
+}
+
 #[test]
 fn test_parsing() -> Result<(), Box<dyn Error>> {
     std::env::set_var("RUST_LOG", "debug");
     env_logger::try_init()?;
-    parse_all(PathBuf::from("./"))?;
+    parse_all(PathBuf::from("./"), None)?;
     Ok(())
 }

@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 reaper-levitanus = {path="../reaper-levitanus"}
+env_logger = {workspace=true}
 
