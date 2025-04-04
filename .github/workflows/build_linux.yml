@@ -14,6 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+    - uses: ConorMacBride/install-package@v1
+      with:
+        apt: ffmpeg
     - uses: actions/checkout@v3
     - name: Build
       run: cargo build --workspace
