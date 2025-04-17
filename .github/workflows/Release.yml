@@ -18,7 +18,7 @@ jobs:
     - run: mv target/release/libreaper_levitanus_plugin.so target/release/reaper_levitanus_plugin.so
     - uses: ncipollo/release-action@v1
       with:
-        artifacts: "target/release/reaper_levitanus_plugin.so"
+        artifacts: ["target/release/reaper_levitanus_plugin.so", "target/release/ffmpeg_front"]
         bodyFile: "body.md"
         allowUpdates: true
   windows:
@@ -30,7 +30,7 @@ jobs:
     - run: cargo build --all --release
     - uses: ncipollo/release-action@v1
       with:
-        artifacts: "target/release/reaper_levitanus_plugin.dll"
+        artifacts: ["target/release/reaper_levitanus_plugin.dll", "target/release/ffmpeg_front.exe"]
         bodyFile: "body.md"
         allowUpdates: true
   macos:
@@ -44,7 +44,7 @@ jobs:
     - run: mv target/release/libreaper_levitanus_plugin.dylib target/release/reaper_levitanus_plugin.dylib
     - uses: ncipollo/release-action@v1
       with:
-        artifacts: "target/release/reaper_levitanus_plugin.dylib"
+        artifacts: ["target/release/reaper_levitanus_plugin.dylib", target/release/ffmpeg_front.app]
         bodyFile: "body.md"
         allowUpdates: true
 

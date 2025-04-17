@@ -70,8 +70,16 @@ pub struct Backend {
 }
 impl Backend {
     pub fn new() -> anyhow::Result<Backend> {
-        let front =
-            Command::new("/home/levitanus/gits/reaper-levitanus/target/debug/front").spawn()?;
+        let mut front_path = PathBuf::from(Reaper::get().get_resource_path()?)
+            .join(PathBuf::from("UserPlugins"))
+            .join(PathBuf::from("ffmpeg_front"));
+        if cfg!(target_os = "windows") {
+            front_path = front_path.with_extension("exe");
+        }
+        if cfg!(target_os = "macos") {
+            front_path = front_path.with_extension("app");
+        }
+        let front = Command::new(front_path).spawn()?;
         let (sockets, broadcaster) = rea_rs::socket::spawn_server(SOCKET_ADDRESS);
         Ok(Backend {
             front,
