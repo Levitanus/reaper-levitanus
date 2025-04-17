@@ -44,7 +44,7 @@ jobs:
     - run: mv target/release/libreaper_levitanus_plugin.dylib target/release/reaper_levitanus_plugin.dylib
     - uses: ncipollo/release-action@v1
       with:
-        artifacts: ["target/release/reaper_levitanus_plugin.dylib", target/release/ffmpeg_front.app]
+        artifacts: ["target/release/reaper_levitanus_plugin.dylib", "target/release/ffmpeg_front.app"]
         bodyFile: "body.md"
         allowUpdates: true
 
