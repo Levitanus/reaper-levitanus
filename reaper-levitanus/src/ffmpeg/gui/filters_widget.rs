@@ -43,7 +43,7 @@ pub enum FilterChain {
 }
 
 impl Front {
-    pub(crate) fn widget_filters(&mut self, ctx: &Context, ui: &mut Ui) {
+    pub(crate) fn widget_filters(&mut self, _ctx: &Context, ui: &mut Ui) {
         let widget = &mut self.filters_widget;
         if let Some(item) = &mut widget.selected_video_item {
             ui.horizontal(|ui| {

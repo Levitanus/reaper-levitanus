@@ -3,11 +3,11 @@ use std::{fmt::Display, path::PathBuf, process::Command, time::Duration};
 use fraction::Fraction;
 use lazy_static::lazy_static;
 use log::debug;
-use rea_rs::SourceOffset;
+use rea_rs::{misc_types::TruncDuration, Position};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::LevitanusError;
+use crate::{ffmpeg::base::TIMELINE_PRECISION, LevitanusError};
 
 use super::options::{FfmpegColor, Opt};
 
@@ -154,10 +154,11 @@ pub trait Timestamp {
 }
 impl Timestamp for Duration {
     fn timestump(&self) -> String {
-        let hours = self.as_secs() / 60 / 60;
-        let mins = self.as_secs() / 60;
-        let secs = self.as_secs() % 60;
-        let millis = self.subsec_millis();
+        let duration = self.trunc(TIMELINE_PRECISION);
+        let hours = duration.as_secs() / 60 / 60;
+        let mins = duration.as_secs() / 60;
+        let secs = duration.as_secs() % 60;
+        let millis = duration.subsec_millis();
         format!("{hours}:{mins}:{secs}.{millis:03}")
     }
 }
@@ -169,5 +170,10 @@ impl Timestamp for rea_rs::SourceOffset {
         let secs = delta.num_seconds() % 60;
         let millis = delta.subsec_nanos() / 1000000;
         format!("{hours}:{mins}:{secs}.{millis:03}")
+    }
+}
+impl Timestamp for Position {
+    fn timestump(&self) -> String {
+        self.as_duration().timestump()
     }
 }

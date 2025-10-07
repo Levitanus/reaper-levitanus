@@ -1,9 +1,8 @@
 [package]
-name = "ffmpeg_front"
+name = "levitanus_frontend"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-reaper-levitanus = {path="../reaper-levitanus"}
-env_logger = {workspace=true}
-
+reaper-levitanus = { path = "../reaper-levitanus" }
+env_logger = { workspace = true }

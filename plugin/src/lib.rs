@@ -7,10 +7,10 @@ use rea_rs::{
 };
 use rea_rs_macros::reaper_extension_plugin;
 use reaper_levitanus::{
-    // ffmpeg::{gui::gui, render_video},
     envelope_snap::register_envelope_actions,
-    ffmpeg::ffmpeg_gui,
+    ffmpeg::{ffmpeg_gui, stop_ffmpeg_gui},
     normalization::normalize_all_takes_on_selected_items,
+    sample_editor::{self, sample_editor_gui, stop_sample_editor_gui},
 };
 
 use std::error::Error;
@@ -46,20 +46,42 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         Err(err) => error_box("can not register envelope actions", err.to_string()),
         Ok(_) => (),
     }
-    // let res = rpr.register_action(
-    //     "LEVITANUS_FFMPEG_RENDER_ALL",
-    //     "render project video",
-    //     |_: i32| render_video(),
-    //     None,
-    // );
-    // match res {
-    //     Err(err) => error_box("can not register render video", err.to_string()),
-    //     Ok(_) => (),
-    // }
+
     let res = rpr.register_action(
         "LEVITANUS_FFMPEG_GUI",
-        "ffmpeg gui",
+        "ffmpeg gui: start",
         |_: i32| ffmpeg_gui(),
+        None,
+    );
+    match res {
+        Err(err) => error_box("can not register ffmpeg gui", err.to_string()),
+        Ok(_) => (),
+    }
+    let res = rpr.register_action(
+        "LEVITANUS_FFMPEG_GUI_STOP",
+        "ffmpeg gui: stop control surface",
+        |_: i32| stop_ffmpeg_gui(),
+        None,
+    );
+    match res {
+        Err(err) => error_box("can not register ffmpeg gui", err.to_string()),
+        Ok(_) => (),
+    }
+
+    let res = rpr.register_action(
+        "LEVITANUS_SAMPLE_EDITOR_GUI",
+        "sample_editor gui: start",
+        |_: i32| sample_editor_gui(),
+        None,
+    );
+    match res {
+        Err(err) => error_box("can not register sample_editor gui", err.to_string()),
+        Ok(_) => (),
+    }
+    let res = rpr.register_action(
+        "LEVITANUS_SAMPLE_EDITOR_GUI_STOP",
+        "sample_editor gui: stop control surface",
+        |_: i32| stop_sample_editor_gui(),
         None,
     );
     match res {

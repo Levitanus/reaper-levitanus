@@ -1,10 +1,16 @@
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub mod envelope_snap;
 pub mod ffmpeg;
+pub mod gui;
 pub mod normalization;
+pub mod reaper_interraction;
+pub mod sample_editor;
 
-#[derive(Debug, Error)]
+pub static EXT_SECTION: &str = "Levitanus";
+
+#[derive(Debug, Error, Serialize, Deserialize, Clone)]
 pub enum LevitanusError {
     #[error("unexpected behavior: {0}")]
     Unexpected(String),

@@ -5,10 +5,10 @@ use std::{
     sync::mpsc::{channel, Receiver, SendError, Sender},
     thread::spawn,
     time::Duration,
+    vec,
 };
 
-use egui::{Area, Color32, Context, Id, Modal, ProgressBar, RichText, ScrollArea, Ui};
-use itertools::Itertools;
+use egui::{Color32, Context, Id, Modal, ProgressBar, RichText, ScrollArea, Ui};
 use lazy_static::lazy_static;
 use log::{debug, error};
 use regex::Regex;
@@ -16,10 +16,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ffmpeg::{
-        base::{Render, TimeLine},
+        base::{build_timeline, Render, RenderRegion, RenderTask, TimeLine, VideoInput},
         base_types::Timestamp,
         options::DurationUnit,
+        RenderSettings,
     },
+    gui::frame,
     LevitanusError,
 };
 
@@ -214,8 +216,9 @@ impl RenderMessage {
 }
 
 impl Front {
-    pub fn render(&mut self, render_queue: Vec<TimeLine>) -> anyhow::Result<()> {
-        for tl in render_queue {
+    pub fn render(&mut self, render_queue: Vec<RenderTask>) -> anyhow::Result<()> {
+        for task in render_queue {
+            let tl = build_timeline(task.render_region, task.render_settings, task.inputs);
             let (sender, reciever) = channel();
             let (thread_s, thread_r) = channel();
             let filename = tl
@@ -295,7 +298,7 @@ impl Front {
     }
 
     pub(crate) fn widget_render(&mut self, ctx: &Context, ui: &mut Ui) {
-        Self::frame(ui, |ui| {
+        frame(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui.button(RichText::new("render").strong()).clicked() {
                     self.emit(FrontMessage::Render);
@@ -320,7 +323,7 @@ impl Front {
                                 }
                             },
                         };
-                        Self::frame(ui, |ui| {
+                        frame(ui, |ui| {
                             ui.label(job.filename.to_string_lossy());
                             if ui.button("show render script").clicked() {
                                 job.show_script = true;

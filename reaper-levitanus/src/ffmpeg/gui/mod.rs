@@ -2,7 +2,6 @@ use std::{
     fs::File,
     io::BufReader,
     path::PathBuf,
-    process::{Child, Command},
     sync::{
         mpsc::{self, channel, Receiver, Sender},
         Arc, Mutex,
@@ -12,7 +11,7 @@ use std::{
 };
 
 use anyhow::Error;
-use egui::{style::ScrollStyle, ScrollArea};
+use eframe::egui::{style::ScrollStyle, ScrollArea};
 use filters_widget::{FilterChain, FlitersWidget, SelectedVideoItem};
 use log::{debug, error};
 use rea_rs::{
@@ -23,7 +22,7 @@ use render_widget::RenderJob;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    base::{get_filters, SerializedFilter, TimeLine},
+    base::{get_filters, get_render_tasks, RenderTask, SerializedFilter},
     base_types::{framerate_from_video, Resolution},
     options::{Encoder, Muxer, Opt, ParsedFilter},
     parser::{
@@ -32,8 +31,9 @@ use super::{
     RenderSettings,
 };
 use crate::{
-    ffmpeg::base::{build_render_timelines, set_filters},
-    LevitanusError,
+    ffmpeg::base::set_filters,
+    gui::{get_front_socket_address, widget_error_box, ExitCode},
+    LevitanusError, EXT_SECTION,
 };
 
 mod filters_widget;
@@ -43,9 +43,8 @@ mod small_widgets;
 
 pub static PERSIST: bool = true;
 pub static BACKEND_ID_STRING: &str = "LevitanusFfmpegGui";
-pub static SOCKET_ADDRESS: &str = "127.0.0.1:49332";
-pub static EXT_SECTION: &str = "Levitanus";
 pub static EXT_STATE_KEY: &str = "FFMPEG_FrontState";
+pub static SOCKET_PORT: u16 = 49334;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 enum IppMessage {
@@ -55,14 +54,13 @@ enum IppMessage {
     GetCurrentVideoItem,
     SetCurrentVideoItem(PathBuf),
     BuildRenderSequence(RenderSettings),
-    RenderSequence(Vec<TimeLine>),
+    RenderSequence(Vec<RenderTask>),
     OnSelectedVideoItem(SelectedVideoItem),
     UpdateFilters(SelectedVideoItem),
 }
 
 #[derive(Debug)]
 pub struct Backend {
-    front: Child,
     sockets: Arc<Mutex<Vec<SocketHandle<IppMessage>>>>,
     broadcaster: Broadcaster,
     last_video_item_guid: Option<GUID>,
@@ -70,19 +68,10 @@ pub struct Backend {
 }
 impl Backend {
     pub fn new() -> anyhow::Result<Backend> {
-        let mut front_path = PathBuf::from(Reaper::get().get_resource_path()?)
-            .join(PathBuf::from("UserPlugins"))
-            .join(PathBuf::from("ffmpeg_front"));
-        if cfg!(target_os = "windows") {
-            front_path = front_path.with_extension("exe");
-        }
-        if cfg!(target_os = "macos") {
-            front_path = front_path.with_extension("app");
-        }
-        let front = Command::new(front_path).spawn()?;
-        let (sockets, broadcaster) = rea_rs::socket::spawn_server(SOCKET_ADDRESS);
+        let (sockets, broadcaster) = rea_rs::socket::spawn_server(get_front_socket_address(
+            crate::gui::ComponentType::FfmpegGui,
+        ));
         Ok(Backend {
-            front,
             sockets,
             broadcaster,
             last_video_item_guid: None,
@@ -108,7 +97,6 @@ impl Backend {
 impl Drop for Backend {
     fn drop(&mut self) {
         self.broadcaster.shutdown().ok();
-        self.front.kill().ok();
     }
 }
 impl Backend {}
@@ -185,7 +173,7 @@ impl ControlSurface for Backend {
                     }
                     IppMessage::SetCurrentVideoItem(_) => error!("recieved current video item"),
                     IppMessage::BuildRenderSequence(s) => {
-                        client.send(IppMessage::RenderSequence(build_render_timelines(&s)?))?
+                        client.send(IppMessage::RenderSequence(get_render_tasks(&s)?))?
                     }
                     IppMessage::RenderSequence(_) => error!("recieved render_sequence on back-end"),
                     IppMessage::OnSelectedVideoItem(_) => {
@@ -263,12 +251,6 @@ impl Default for State {
             master_filters: Vec::new(),
         }
     }
-}
-
-#[derive(Debug)]
-enum ExitCode {
-    Shutdown,
-    Error(String),
 }
 
 #[derive(Debug)]
@@ -472,7 +454,7 @@ impl Front {
     }
 }
 impl eframe::App for Front {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if let Err(e) = self.poll_messages() {
             self.exit_code = Some(ExitCode::Error(e.to_string()));
         }
@@ -480,7 +462,7 @@ impl eframe::App for Front {
             match code {
                 ExitCode::Shutdown => return ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                 ExitCode::Error(e) => {
-                    self.widget_error_box(ctx, e);
+                    widget_error_box(ctx, e);
                     return;
                 }
             }
@@ -517,7 +499,8 @@ impl eframe::App for Front {
 
 pub fn front() -> anyhow::Result<()> {
     let native_options = eframe::NativeOptions::default();
-    let socket = socket::spawn_client(SOCKET_ADDRESS)?;
+    let address = get_front_socket_address(crate::gui::ComponentType::FfmpegGui);
+    let socket = socket::spawn_client(address)?;
     socket.send(IppMessage::Init)?;
     let state = {
         let mut state: Result<State, LevitanusError> = Err(LevitanusError::FrontInitialization(

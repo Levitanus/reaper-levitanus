@@ -1,9 +1,6 @@
 use std::{path::PathBuf, process::Command, time::Duration};
 
-use crate::{
-    ffmpeg::gui::{EXT_SECTION, PERSIST},
-    LevitanusError,
-};
+use crate::{ffmpeg::gui::PERSIST, LevitanusError, EXT_SECTION};
 
 use super::{
     base_types::{RenderSettings, Resolution, Timestamp},
@@ -17,7 +14,7 @@ use log::{debug, error};
 use rea_rs::{
     project_info::{BoundsMode, RenderMode},
     ExtState, HasExtState, Mutable, Position, Project, Reaper, SoloMode, SourceOffset, Track,
-    WithReaperPtr,
+    TruncDuration, WithReaperPtr,
 };
 use serde::{Deserialize, Serialize};
 
@@ -133,29 +130,21 @@ pub struct TimeLineContent {
     content_type: TimeLineContentType,
     timeline_position: Position,
     timeline_end_position: Position,
-    z_index: usize,
 }
 impl TimeLineContent {
     fn new(duration: Duration) -> Self {
-        let z_index = Reaper::get().current_project().n_tracks();
         Self {
             content_type: TimeLineContentType::Background,
             timeline_position: Position::default(),
             timeline_end_position: Position::from(duration),
-            z_index,
         }
     }
     fn push_video(&mut self, video: VideoInput) {
-        assert!(
-            video.track_index <= self.z_index,
-            "pushing underlying video"
-        );
         if video.fade_in.is_none()
             && video.fade_out.is_none()
             && video.timeline_position == self.timeline_position
             && video.timeline_end_position == self.timeline_end_position
         {
-            self.z_index = video.track_index;
             self.content_type = Video::new(video).content_type;
             return;
         }
@@ -209,20 +198,17 @@ impl TimeLineContent {
         match self_right {
             None => {
                 debug!("no self right, left is right.");
-                self.z_index = left.z_index;
                 self.content_type = left.content_type;
             }
             Some(right) => match fade_out {
                 None => {
                     debug!("there is right, video has no fade_out, apllying Concat");
                     let content = Concat::new(left, right);
-                    self.z_index = content.z_index;
                     self.content_type = content.content_type;
                 }
                 Some(d) => {
                     debug!("there is right, video has fade_out, applying XFade");
                     let content = XFade::new(left, right, d);
-                    self.z_index = content.z_index;
                     self.content_type = content.content_type;
                 }
             },
@@ -235,13 +221,11 @@ impl TimeLineContent {
                     content_type: TimeLineContentType::Background,
                     timeline_position: self.timeline_position,
                     timeline_end_position: position,
-                    z_index: self.z_index,
                 };
                 let right = TimeLineContent {
                     content_type: TimeLineContentType::Background,
                     timeline_position: position,
                     timeline_end_position: self.timeline_end_position,
-                    z_index: self.z_index,
                 };
                 (left, right)
             }
@@ -260,13 +244,11 @@ impl TimeLineContent {
                     content_type: TimeLineContentType::Video(left),
                     timeline_position: self.timeline_position,
                     timeline_end_position: position,
-                    z_index: self.z_index,
                 };
                 let right = TimeLineContent {
                     content_type: TimeLineContentType::Video(right),
                     timeline_position: position,
                     timeline_end_position: self.timeline_end_position,
-                    z_index: self.z_index,
                 };
                 // debug!(
                 //     "video pos: {:?}, split pos: {:?},\nleft: {:#?},\nright: {:#?}",
@@ -491,7 +473,6 @@ impl Concat {
         );
         let timeline_position = left.timeline_position;
         let timeline_end_position = right.timeline_end_position;
-        let z_index = left.z_index.min(right.z_index);
         TimeLineContent {
             content_type: TimeLineContentType::Concat(Concat {
                 left: Box::new(left),
@@ -499,7 +480,6 @@ impl Concat {
             }),
             timeline_position,
             timeline_end_position,
-            z_index,
         }
     }
 }
@@ -512,14 +492,23 @@ struct XFade {
 }
 impl XFade {
     fn new(left: TimeLineContent, right: TimeLineContent, duration: Duration) -> TimeLineContent {
-        debug!("XFade::new(left: {:#?}, right: {:#?})", left, right);
+        debug!(
+            "XFade::new(left start/end: {:#?}, right start/end: {:#?})",
+            (
+                left.timeline_position.timestump(),
+                left.timeline_end_position.timestump()
+            ),
+            (
+                right.timeline_position.timestump(),
+                right.timeline_end_position.timestump()
+            )
+        );
         assert_eq!(
-            left.timeline_end_position - duration.into(),
+            (left.timeline_end_position - duration.into()),
             right.timeline_position,
             "wrong duration length. duration: {:?}",
-            duration
+            duration.trunc(TIMELINE_PRECISION)
         );
-        let z_index = left.z_index.min(right.z_index);
         let timeline_position = left.timeline_position;
         let timeline_end_position = right.timeline_end_position;
         TimeLineContent {
@@ -530,7 +519,6 @@ impl XFade {
             }),
             timeline_position,
             timeline_end_position,
-            z_index,
         }
     }
 }
@@ -555,13 +543,12 @@ impl Video {
             }),
             timeline_position: video.timeline_position,
             timeline_end_position: video.timeline_end_position,
-            z_index: video.track_index,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct VideoInput {
+pub struct VideoInput {
     file: PathBuf,
     timeline_position: Position,
     timeline_end_position: Position,
@@ -609,12 +596,31 @@ impl TimeLine {
     }
 }
 
-pub fn build_render_timelines(render_settings: &RenderSettings) -> anyhow::Result<Vec<TimeLine>> {
+// pub fn build_render_timelines(render_settings: &RenderSettings) -> anyhow::Result<Vec<TimeLine>> {
+//     let render_regions = get_render_regions()?;
+//     let timelines = render_regions.into_iter().map(|reg| {
+//         let inputs = build_inputs_queue(&reg);
+//         build_timeline(reg, render_settings.clone(), inputs)
+//     });
+//     Ok(timelines.collect())
+// }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RenderTask {
+    pub inputs: Vec<VideoInput>,
+    pub render_region: RenderRegion,
+    pub render_settings: RenderSettings,
+}
+pub fn get_render_tasks(render_settings: &RenderSettings) -> anyhow::Result<Vec<RenderTask>> {
     let render_regions = get_render_regions()?;
-    let timelines = render_regions
+    Ok(render_regions
         .into_iter()
-        .map(|reg| build_timeline(reg, render_settings.clone()));
-    Ok(timelines.collect())
+        .map(|reg| RenderTask {
+            inputs: build_inputs_queue(&reg),
+            render_region: reg,
+            render_settings: render_settings.clone(),
+        })
+        .collect())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd)]
@@ -681,16 +687,25 @@ where
     ExtState::new(EXT_SECTION, EXT_KEY_FILTERS, None, PERSIST, item, None).set(filters);
 }
 
-static TIMELINE_PRECISION: u32 = 1000000;
+pub static TIMELINE_PRECISION: u32 = 10000;
 
-fn build_timeline(render_region: RenderRegion, render_settings: RenderSettings) -> TimeLine {
+pub fn build_timeline(
+    render_region: RenderRegion,
+    render_settings: RenderSettings,
+    inputs: Vec<VideoInput>,
+) -> TimeLine {
+    let (start, end) = (render_region.get_start(), render_region.get_end());
+    let mut timeline = TimeLine::new(render_region.file, start, end, render_settings);
+    inputs.into_iter().for_each(|input| timeline.push(input));
+    // debug!("{:#?}", timeline);
+    timeline
+}
+
+fn build_inputs_queue(render_region: &RenderRegion) -> Vec<VideoInput> {
+    let (start, end) = (render_region.get_start(), render_region.get_end());
     let rpr = Reaper::get();
     let pr = rpr.current_project();
-    let (start, end) = (
-        render_region.start.with_precision(TIMELINE_PRECISION),
-        render_region.end.with_precision(TIMELINE_PRECISION),
-    );
-    let mut timeline = TimeLine::new(render_region.file, start, end, render_settings);
+    let mut inputs = Vec::new();
     for track in pr.iter_tracks().rev() {
         if track.muted() {
             continue;
@@ -735,7 +750,7 @@ fn build_timeline(render_region: RenderRegion, render_settings: RenderSettings) 
                 item.end_position().as_duration().timestump()
             );
             let timeline_position = if start < item.position().with_precision(TIMELINE_PRECISION) {
-                item.position() - start
+                item.position().with_precision(TIMELINE_PRECISION) - start
             } else {
                 Position::from(0.0).with_precision(TIMELINE_PRECISION)
             };
@@ -785,7 +800,7 @@ fn build_timeline(render_region: RenderRegion, render_settings: RenderSettings) 
             let mut filter_chain = item_filters;
             filter_chain.extend(track_filters.clone());
 
-            timeline.push(VideoInput {
+            let input = VideoInput {
                 file,
                 timeline_position,
                 timeline_end_position,
@@ -803,11 +818,11 @@ fn build_timeline(render_region: RenderRegion, render_settings: RenderSettings) 
                 fade_out_is_x_fade: false,
                 track_index: track.index(),
                 filter_chain,
-            })
+            };
+            inputs.push(input);
         }
     }
-    // debug!("{:#?}", timeline);
-    timeline
+    inputs
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -815,6 +830,17 @@ pub struct RenderRegion {
     start: Position,
     end: Position,
     file: PathBuf,
+}
+impl RenderRegion {
+    pub fn get_start(&self) -> Position {
+        self.start.with_precision(TIMELINE_PRECISION)
+    }
+    pub fn get_end(&self) -> Position {
+        self.end.with_precision(TIMELINE_PRECISION)
+    }
+    pub fn get_file(&self) -> &PathBuf {
+        &self.file
+    }
 }
 
 fn get_render_targets(pr: &Project, idx: usize) -> anyhow::Result<PathBuf> {

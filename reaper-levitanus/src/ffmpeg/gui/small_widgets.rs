@@ -1,5 +1,5 @@
 use super::{Front, FrontMessage};
-use crate::ffmpeg::parser::ParsingProgress;
+use crate::{ffmpeg::parser::ParsingProgress, gui::frame};
 use egui::{
     text::LayoutJob, Color32, ComboBox, Context, FontId, Frame, Id, InnerResponse, Layout, Modal,
     ProgressBar, Response, RichText, Stroke, TextFormat, Ui,
@@ -7,7 +7,7 @@ use egui::{
 
 impl Front {
     pub(crate) fn widget_parser(&self, ctx: &egui::Context, ui: &mut egui::Ui) {
-        Self::frame(ui, |ui| {
+        frame(ui, |ui| {
             match &self.parsing_progress {
                 ParsingProgress::Unparsed => {
                     Modal::new(Id::new("parse yes no")).show(ctx, |ui| {
@@ -50,30 +50,6 @@ impl Front {
                 }
             }
         });
-    }
-
-    pub(crate) fn widget_error_box(&self, ctx: &Context, error: impl AsRef<str>) {
-        Modal::new(Id::new("error")).show(ctx, |ui| {
-            ui.with_layout(Layout::top_down_justified(egui::Align::Center), |ui| {
-                ui.heading("Error!");
-                ui.label("Application will be closed because of the error:");
-                ui.label(RichText::new(error.as_ref()).color(Color32::RED));
-                if ui.button("Ok").clicked() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            })
-        });
-    }
-
-    pub(crate) fn frame<F>(
-        ui: &mut Ui,
-        add_contents: impl FnOnce(&mut Ui) -> F,
-    ) -> InnerResponse<F> {
-        Frame::new()
-            .stroke(Stroke::new(1.5, Color32::from_white_alpha(0x20)))
-            .corner_radius(10.0)
-            .inner_margin(7.0)
-            .show(ui, add_contents)
     }
 
     pub(crate) fn encoder_flag<'a>(
