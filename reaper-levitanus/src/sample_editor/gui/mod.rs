@@ -1,4 +1,5 @@
 use anyhow::Error;
+use dasp_rs::estimate_tuning;
 use egui::style::ScrollStyle;
 use log::{debug, warn};
 use rea_rs::{
@@ -6,7 +7,11 @@ use rea_rs::{
     ControlSurface, ExtState, Project, Reaper,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::{
+    fmt::format,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use std::{
     path::Component,
     sync::mpsc::{self, Receiver, Sender},
@@ -14,6 +19,7 @@ use std::{
 
 use crate::{
     gui::{get_front_socket_address, widget_error_box, ExitCode},
+    sample_editor::{get_regions_in_time_selection, Region, RegionInfo, TrackInfo},
     LevitanusError, EXT_SECTION,
 };
 
@@ -21,6 +27,7 @@ pub static BACKEND_ID_STRING: &str = "SAMPLE_EDITOR_BACKEND";
 static EXT_STATE_KEY: &str = "SAMPLE_EDITOR_FrontState";
 pub static PERSIST: bool = true;
 pub static SOCKET_PORT: u16 = 49338;
+pub static DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
 
 // === Message enum for sample editor protocol ===
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +35,8 @@ pub enum IppMessage {
     Init,
     State(State),
     Shutdown,
+    GetRegionsInTimeSelection,
+    SendRegionsInTimeSelection(Vec<RegionInfo>),
     // Add more messages as needed
 }
 
@@ -40,6 +49,7 @@ pub struct State {}
 pub struct Backend {
     sockets: Arc<Mutex<Vec<SocketHandle<IppMessage>>>>,
     broadcaster: Broadcaster,
+    analyze_tracks: Vec<TrackInfo>,
 }
 
 impl Backend {
@@ -47,9 +57,16 @@ impl Backend {
         let socket_address =
             crate::gui::get_front_socket_address(crate::gui::ComponentType::SampleEditor);
         let (sockets, broadcaster) = rea_rs::socket::spawn_server(socket_address);
+        let mut analyze_tracks = Vec::new();
+        for idx in [2, 3] {
+            if let Some(track) = Reaper::get().current_project().get_track(idx) {
+                analyze_tracks.push(TrackInfo::from(track));
+            }
+        }
         Ok(Backend {
             sockets,
             broadcaster,
+            analyze_tracks,
         })
     }
     fn ext_state(pr: &Project) -> ExtState<State, Project> {
@@ -80,6 +97,16 @@ impl ControlSurface for Backend {
                     IppMessage::Shutdown => {
                         shutdown = true;
                     } // Add more message handling as needed
+                    IppMessage::GetRegionsInTimeSelection => {
+                        let analyze_tracks = match self.analyze_tracks.is_empty() {
+                            true => None,
+                            false => Some(&self.analyze_tracks),
+                        };
+                        client.send(IppMessage::SendRegionsInTimeSelection(
+                            get_regions_in_time_selection(analyze_tracks.map(|v| &**v)),
+                        ))?;
+                    }
+                    IppMessage::SendRegionsInTimeSelection(_) => (),
                 }
             }
         }
@@ -111,7 +138,8 @@ pub struct Front {
 pub enum FrontMessage {
     Exit,
     Error(String),
-    // Add more as needed
+    PrintRootNotes,
+    PrintLegatoIntervals,
 }
 
 impl Front {
@@ -123,6 +151,14 @@ impl Front {
             exit_code: None,
             msg_rx,
             msg_tx,
+        }
+    }
+    pub fn emit(&mut self, msg: FrontMessage) {
+        if let Err(e) = self.msg_tx.send(msg) {
+            self.exit_code = Some(ExitCode::Error(format!(
+                "No connection in internal gui message channel: {}",
+                e
+            )));
         }
     }
     pub fn poll_messages(&mut self) -> anyhow::Result<()> {
@@ -138,10 +174,62 @@ impl Front {
                 IppMessage::Shutdown => {
                     self.exit_code = Some(ExitCode::Shutdown);
                 } // Add more message handling as needed
+                IppMessage::GetRegionsInTimeSelection => (),
+                IppMessage::SendRegionsInTimeSelection(regions) => {
+                    debug!("Received regions in time selection: {:#?}", regions);
+                }
             }
         }
-        // Poll messages from UI (msg_rx) if needed
+        // Collect UI messages first to avoid borrow checker issues
+        let ui_msgs: Vec<_> = self.msg_rx.try_iter().collect();
+        for msg in ui_msgs {
+            match msg {
+                FrontMessage::Exit => {
+                    // Handle UI exit event
+                    self.exit_code = Some(ExitCode::Shutdown);
+                }
+                FrontMessage::Error(e) => {
+                    self.exit_code = Some(ExitCode::Error(e));
+                } // Add more UI message handling as needed
+                FrontMessage::PrintRootNotes => {
+                    let regions = self.get_regions_in_time_selection()?;
+                    for region in regions {
+                        let mut region = Region::from(region);
+                        println!("{:#?}", region.estimate_root_note(None, None, None, None));
+                    }
+                }
+                FrontMessage::PrintLegatoIntervals => {
+                    let regions = self.get_regions_in_time_selection()?;
+                    for region in regions {
+                        let mut region = Region::from(region);
+                        println!(
+                            "{:#?}",
+                            region.estimate_legato_interval(None, None, None, 512)
+                        );
+                    }
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// Retrieves regions in time selection from the backend via the socket.
+    fn get_regions_in_time_selection(&mut self) -> anyhow::Result<Vec<RegionInfo>> {
+        self.socket.send(IppMessage::GetRegionsInTimeSelection)?;
+        match self.socket.recv_timeout(DEFAULT_TIMEOUT) {
+            Ok(msg) => {
+                if let IppMessage::SendRegionsInTimeSelection(regions) = msg {
+                    Ok(regions)
+                } else {
+                    Err(LevitanusError::Unexpected(format!(
+                        "Unexpected message on get_regions_in_time_selection: {:#?}",
+                        msg
+                    ))
+                    .into())
+                }
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 }
 impl eframe::App for Front {
@@ -165,6 +253,18 @@ impl eframe::App for Front {
             ui.heading("Sample Editor");
             if ui.button("Exit").clicked() {
                 self.msg_tx.send(FrontMessage::Exit).unwrap_or(());
+            }
+            if ui
+                .button("print root notes of regions in time selection")
+                .clicked()
+            {
+                self.emit(FrontMessage::PrintRootNotes);
+            }
+            if ui
+                .button("print legato_intervals of regions in time selection")
+                .clicked()
+            {
+                self.emit(FrontMessage::PrintLegatoIntervals);
             }
         });
 

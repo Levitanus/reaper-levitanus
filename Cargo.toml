@@ -1,34 +1,31 @@
 [workspace]
-members = [
-"reaper-levitanus", 
-"test", 
-"plugin", 
-"front"
-]
+members = ["reaper-levitanus", "test", "plugin", "front"]
 
 [workspace.dependencies]
-rea-rs = {git = "https://github.com/Levitanus/rea-rs"}
-rea-rs-low = {git = "https://github.com/Levitanus/rea-rs"}
-rea-rs-macros = {git = "https://github.com/Levitanus/rea-rs"}
-rea-rs-test = {git = "https://github.com/Levitanus/rea-rs"}
+# rea-rs = {git = "https://github.com/Levitanus/rea-rs"}
+# rea-rs-low = {git = "https://github.com/Levitanus/rea-rs"}
+# rea-rs-macros = {git = "https://github.com/Levitanus/rea-rs"}
+# rea-rs-test = {git = "https://github.com/Levitanus/rea-rs"}
 
-# rea-rs = {path = "../rea-rs/rea-rs"}
-# rea-rs-low = {path = "../rea-rs/low"}
-# rea-rs-macros = {path = "../rea-rs/macros"}
-# rea-rs-test = {path = "../rea-rs/rea-rs-test"}
+rea-rs = { path = "../rea-rs/rea-rs" }
+rea-rs-low = { path = "../rea-rs/low" }
+rea-rs-macros = { path = "../rea-rs/macros" }
+rea-rs-test = { path = "../rea-rs/rea-rs-test" }
+musical-note = { path = "../musical-note" }
+dasp-rs = { path = "../dasp-rs" }
 
 derivative = "2.2"
 env_logger = "0.10"
-fraction = {version="0.15", features=["with-serde-support"]}
+fraction = { version = "0.15", features = ["with-serde-support"] }
 itertools = "0.10"
 log = "0.4"
-serde = {version = "1.0", features = ["derive"]}
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 regex = "1.10"
 lazy_static = "1.4"
 path-absolutize = "3.1.1"
 dyn-clone = "1.0"
-strum = {version="0.26", features=["derive"]}
+strum = { version = "0.26", features = ["derive"] }
 autopilot = "0.4.0"
 
 tempfile = "3.0"

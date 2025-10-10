@@ -29,3 +29,9 @@ pub enum LevitanusError {
     #[error("ReaperError, original message: {0}")]
     Render(String),
 }
+
+#[derive(Debug, Error, Serialize, Deserialize, Clone)]
+pub enum SampleEditorError {
+    #[error("EmptyRegion: no audio sources in region found.")]
+    EmptyRegion,
+}

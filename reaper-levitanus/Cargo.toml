@@ -10,6 +10,9 @@ rea-rs = { workspace = true }
 rea-rs-low = { workspace = true }
 rea-rs-macros = { workspace = true }
 
+dasp-rs = { workspace = true }
+musical-note = { workspace = true }
+
 env_logger = { workspace = true }
 log = { workspace = true }
 
@@ -40,9 +43,10 @@ eframe = { version = "0.32", default-features = false, features = [
     "wayland",       # To support Linux (and CI)
     "x11",
 ] }
-dasp-rs = { path = "../../dasp-rs" }
 winit = "0.30.12"
 confy = "1.0.0"
+ndarray-stats = "0.6.0"
+statrs = "0.18.0"
 
 [lib]
 crate-type = ["lib"]
