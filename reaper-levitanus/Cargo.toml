@@ -10,7 +10,7 @@ rea-rs = { workspace = true }
 rea-rs-low = { workspace = true }
 rea-rs-macros = { workspace = true }
 
-dasp-rs = { workspace = true }
+dasp-rs = { workspace = true, features = ["openblas-static"] }
 musical-note = { workspace = true }
 
 env_logger = { workspace = true }
