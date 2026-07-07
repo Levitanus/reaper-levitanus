@@ -7,20 +7,21 @@ use std::{
 
 use anyhow::anyhow;
 use log::{info, warn};
-use otio_rs::{Clip, ExternalReference, RationalTime, TimeRange};
 use rea_rs::{
 	ExtState,
 	project_info::{BoundsMode, RenderMode},
 	CommandId, MessageBoxType, MessageBoxValue, Position, Project, Reaper, SoloMode, Take,
 };
+use thiserror::Error;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 const TIMELINE_PRECISION: u32 = 1_000_000;
 const DEFAULT_OTIO_RATE: f64 = 25.0;
 const PLAY_RATE_EFFECT_EPSILON: f64 = 1e-3;
-const OTIO_FRAME_VALUE_PRECISION: f64 = 1_000.0;
+const OTIO_FRAME_VALUE_PRECISION: f64 = 1.0;
 const MIN_SERIALIZED_GAP_FRAMES: f64 = 0.5;
+const KDENLIVE_COMPAT_DISABLE_TIMEWARP: bool = false;
 const RENDER_PROJECT_USING_LAST_SETTINGS_ACTION: u32 = 41824;
 const OTIO_EXT_SECTION: &str = "levitanus_otio_export";
 const OTIO_FPS_POLICY_KEY: &str = "fps_policy";
@@ -43,6 +44,141 @@ impl Default for OtioFpsPolicy {
 		Self::MedianVideo
 	}
 }
+
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct RationalTime {
+    #[serde(rename = "OTIO_SCHEMA")]
+    schema: &'static str,
+    pub value: f64,
+    pub rate: f64,
+}
+
+impl RationalTime {
+    pub fn new(value: f64, rate: f64) -> Self {
+        Self {
+            schema: "RationalTime.1",
+            value,
+            rate,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct TimeRange {
+    #[serde(rename = "OTIO_SCHEMA")]
+    schema: &'static str,
+    pub start_time: RationalTime,
+    pub duration: RationalTime,
+}
+
+impl TimeRange {
+    pub fn new(start_time: RationalTime, duration: RationalTime) -> Result<Self, OtioError> {
+        if duration.value <= 0.0 {
+            return Err(OtioError::InvalidDuration);
+        }
+
+        Ok(Self {
+            schema: "TimeRange.1",
+            start_time,
+            duration,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ExternalReference {
+    #[serde(rename = "OTIO_SCHEMA")]
+    schema: &'static str,
+    pub target_url: String,
+    pub available_range: Option<TimeRange>,
+    pub available_image_bounds: Option<serde_json::Value>,
+    pub metadata: serde_json::Value,
+}
+
+impl ExternalReference {
+    pub fn new(target_url: impl Into<String>) -> Self {
+        Self {
+            schema: "ExternalReference.1",
+            target_url: target_url.into(),
+            available_range: None,
+            available_image_bounds: None,
+            metadata: serde_json::json!({}),
+        }
+    }
+
+    pub fn with_available_range(mut self, available_range: TimeRange) -> Self {
+        self.available_range = Some(available_range);
+        self
+    }
+}
+#[derive(Debug, Error)]
+pub enum OtioError {
+    #[error("clip duration must be greater than zero")]
+    InvalidDuration,
+    #[error("time scalar must be greater than zero")]
+    InvalidTimeScalar,
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct LinearTimeWarp {
+    #[serde(rename = "OTIO_SCHEMA")]
+    schema: &'static str,
+    pub name: String,
+    pub time_scalar: f64,
+    pub metadata: serde_json::Value,
+}
+
+impl LinearTimeWarp {
+    pub fn new(time_scalar: f64) -> Result<Self, OtioError> {
+        if time_scalar <= 0.0 {
+            return Err(OtioError::InvalidTimeScalar);
+        }
+
+        Ok(Self {
+            schema: "LinearTimeWarp.1",
+            name: "LinearTimeWarp".to_string(),
+            time_scalar,
+            metadata: serde_json::json!({}),
+        })
+    }
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct Clip {
+    #[serde(rename = "OTIO_SCHEMA")]
+    schema: &'static str,
+    pub name: String,
+    pub source_range: TimeRange,
+    pub media_reference: ExternalReference,
+    pub metadata: serde_json::Value,
+    pub effects: Vec<LinearTimeWarp>,
+    pub markers: Vec<serde_json::Value>,
+    pub enabled: bool,
+}
+
+impl Clip {
+    pub fn new(
+        name: impl Into<String>,
+        media_reference: ExternalReference,
+        source_range: TimeRange,
+    ) -> Self {
+        Self {
+            schema: "Clip.2",
+            name: name.into(),
+            source_range,
+            media_reference,
+            metadata: serde_json::json!({}),
+            effects: vec![],
+            markers: vec![],
+            enabled: true,
+        }
+    }
+
+    pub fn with_time_stretch(mut self, time_scalar: f64) -> Result<Self, OtioError> {
+        self.effects.push(LinearTimeWarp::new(time_scalar)?);
+        Ok(self)
+    }
+}
+
 
 #[derive(Debug, Clone)]
 enum TargetTrackScope {
@@ -79,28 +215,30 @@ struct StretchPoint {
 struct OtioTrack {
 	#[serde(rename = "OTIO_SCHEMA")]
 	schema: &'static str,
-	name: String,
-	children: Vec<serde_json::Value>,
-	kind: String,
 	metadata: serde_json::Value,
-	enabled: bool,
+	name: String,
 	source_range: Option<TimeRange>,
 	effects: Vec<serde_json::Value>,
 	markers: Vec<serde_json::Value>,
+	enabled: bool,
+	color: Option<serde_json::Value>,
+	children: Vec<serde_json::Value>,
+	kind: String,
 }
 
 impl OtioTrack {
 	fn new(name: impl Into<String>, kind: impl Into<String>) -> Self {
 		Self {
 			schema: "Track.1",
-			name: name.into(),
-			children: Vec::new(),
-			kind: kind.into(),
 			metadata: json!({}),
-			enabled: true,
+			name: name.into(),
 			source_range: None,
 			effects: Vec::new(),
 			markers: Vec::new(),
+			enabled: true,
+			color: None,
+			children: Vec::new(),
+			kind: kind.into(),
 		}
 	}
 }
@@ -109,12 +247,13 @@ impl OtioTrack {
 struct OtioStack {
 	#[serde(rename = "OTIO_SCHEMA")]
 	schema: &'static str,
+	metadata: serde_json::Value,
 	name: String,
 	source_range: Option<TimeRange>,
 	effects: Vec<serde_json::Value>,
 	markers: Vec<serde_json::Value>,
 	enabled: bool,
-	metadata: serde_json::Value,
+	color: Option<serde_json::Value>,
 	children: Vec<OtioTrack>,
 }
 
@@ -122,12 +261,13 @@ impl OtioStack {
 	fn new(children: Vec<OtioTrack>) -> Self {
 		Self {
 			schema: "Stack.1",
+			metadata: json!({}),
 			name: "tracks".to_string(),
 			source_range: None,
 			effects: Vec::new(),
 			markers: Vec::new(),
 			enabled: true,
-			metadata: json!({}),
+			color: None,
 			children,
 		}
 	}
@@ -137,8 +277,8 @@ impl OtioStack {
 struct OtioTimeline {
 	#[serde(rename = "OTIO_SCHEMA")]
 	schema: &'static str,
-	name: String,
 	metadata: serde_json::Value,
+	name: String,
 	global_start_time: Option<RationalTime>,
 	tracks: OtioStack,
 }
@@ -168,20 +308,21 @@ pub fn export_otio_project() -> Result<(), Box<dyn Error>> {
 		}
 
 		let mut tracks = Vec::new();
-		for track_name in track_order {
-			let slices = track_map.remove(&track_name).unwrap_or_default();
-			let children = build_video_track_children(slices, otio_rate)?;
-			let mut track = OtioTrack::new(track_name, "Video");
-			track.children = children;
-			tracks.push(track);
-		}
-
 		if audio_exists {
 			if let Some(audio_clip) = make_audio_clip(&plan, otio_rate)? {
 				let mut audio_track = OtioTrack::new("audio", "Audio");
 				audio_track.children.push(serde_json::to_value(audio_clip)?);
 				tracks.push(audio_track);
 			}
+		}
+
+		for (video_track_idx, track_name) in track_order.into_iter().enumerate() {
+			let slices = track_map.remove(&track_name).unwrap_or_default();
+			let children = build_video_track_children(slices, otio_rate)?;
+			let exported_name = normalize_video_track_name(video_track_idx, &track_name);
+			let mut track = OtioTrack::new(exported_name, "Video");
+			track.children = children;
+			tracks.push(track);
 		}
 
 		let timeline_name = format!(
@@ -621,6 +762,17 @@ fn collect_video_slices(pr: &Project, plan: &RenderTargetPlan) -> anyhow::Result
 	Ok(slices)
 }
 
+fn normalize_video_track_name(export_index: usize, original_name: &str) -> String {
+	let suffix = original_name
+		.trim_start_matches(|c: char| c.is_ascii_digit() || c.is_whitespace())
+		.trim();
+	if suffix.is_empty() {
+		export_index.to_string()
+	} else {
+		format!("{} {}", export_index, suffix)
+	}
+}
+
 #[derive(Debug, Clone)]
 struct Segment {
 	timeline_start: f64,
@@ -788,24 +940,30 @@ fn slice_to_otio_clip(slice: &VideoSlice, otio_rate: f64) -> anyhow::Result<Clip
 	if source_duration <= 0.0 || timeline_duration <= 0.0 {
 		return Err(anyhow!("clip duration must be positive"));
 	}
-	let clip_rate = slice
-		.source_fps
-		.filter(|v| v.is_finite() && *v > 0.0)
-		.unwrap_or(otio_rate);
 	let time_scalar = source_duration / timeline_duration;
-	let use_timewarp = (time_scalar - 1.0).abs() > PLAY_RATE_EFFECT_EPSILON;
+	let use_timewarp = (time_scalar - 1.0).abs() > PLAY_RATE_EFFECT_EPSILON
+		&& !KDENLIVE_COMPAT_DISABLE_TIMEWARP;
 	let serialized_duration = if use_timewarp {
 		source_duration
 	} else {
 		timeline_duration
 	};
+	let min_clip_duration = if otio_rate > 0.0 { 1.0 / otio_rate } else { 0.0 };
+	let serialized_duration = serialized_duration.max(min_clip_duration);
 
 	let source_range = TimeRange::new(
-		otio_time_from_seconds(slice.source_start, clip_rate),
-		otio_time_from_seconds(serialized_duration, clip_rate),
+		otio_time_from_seconds(slice.source_start, otio_rate),
+		otio_time_from_seconds(serialized_duration, otio_rate),
 	)?;
 	let media = ExternalReference::new(path_to_target_url(&slice.file));
-	let mut clip = Clip::new(clip_name(&slice.file), media, source_range);
+	let base_name = clip_name(&slice.file);
+	let unique_name = format!(
+		"{} - t{:.3}-s{:.3}",
+		base_name,
+		slice.timeline_start,
+		slice.source_start
+	);
+	let mut clip = Clip::new(unique_name, media, source_range);
 	if use_timewarp {
 		clip = clip.with_time_stretch(time_scalar.abs())?;
 	}
@@ -842,11 +1000,6 @@ fn build_video_track_children(
 	let mut children = Vec::new();
 	let mut cursor = 0.0_f64;
 	for mut slice in slices {
-		let original_timeline_start = slice.timeline_start;
-		let original_timeline_end = slice.timeline_end;
-		let original_source_start = slice.source_start;
-		let original_source_end = slice.source_end;
-
 		if slice.timeline_start < cursor {
 			let overlap = cursor - slice.timeline_start;
 			let timeline_duration = slice.timeline_end - slice.timeline_start;
@@ -862,67 +1015,36 @@ fn build_video_track_children(
 			continue;
 		}
 
-		let mut gap_len = slice.timeline_start - cursor;
+		let gap_len = slice.timeline_start - cursor;
 		if gap_len > 0.0
 			&& quantize_otio_frame_value(gap_len * otio_rate) < MIN_SERIALIZED_GAP_FRAMES
 		{
 			slice.timeline_start = cursor;
-			gap_len = 0.0;
 		}
-
-		let snapped_gap_len = snap_seconds_to_timeline_frames(gap_len.max(0.0), otio_rate);
-		let snapped_start = cursor + snapped_gap_len;
-		let timeline_duration = slice.timeline_end - slice.timeline_start;
-		let snapped_duration = snap_seconds_to_timeline_frames(timeline_duration, otio_rate);
-		if snapped_duration <= 0.0 {
-			continue;
-		}
-		let snapped_end = snapped_start + snapped_duration;
-
-		retime_slice_linear(
-			&mut slice,
-			original_timeline_start,
-			original_timeline_end,
-			original_source_start,
-			original_source_end,
-			snapped_start,
-			snapped_end,
-		);
 
 		let gap_len = slice.timeline_start - cursor;
 		if gap_len > 1e-6 {
 			children.push(make_gap(gap_len, otio_rate)?);
 		}
 
+		let emitted_duration = serialized_timeline_duration_seconds(&slice, otio_rate);
 		let clip = slice_to_otio_clip(&slice, otio_rate)?;
 		children.push(serde_json::to_value(clip)?);
-		cursor = slice.timeline_end;
+		cursor = slice.timeline_start + emitted_duration;
 	}
 
 	Ok(children)
 }
 
-fn retime_slice_linear(
-	slice: &mut VideoSlice,
-	old_timeline_start: f64,
-	old_timeline_end: f64,
-	old_source_start: f64,
-	old_source_end: f64,
-	new_timeline_start: f64,
-	new_timeline_end: f64,
-) {
-	let old_timeline_len = old_timeline_end - old_timeline_start;
-	let old_source_len = old_source_end - old_source_start;
-	if old_timeline_len <= 0.0 || old_source_len <= 0.0 {
-		return;
-	}
-	let ratio = old_source_len / old_timeline_len;
-	slice.timeline_start = new_timeline_start;
-	slice.timeline_end = new_timeline_end;
-	slice.source_start = old_source_start + (new_timeline_start - old_timeline_start) * ratio;
-	slice.source_end = old_source_start + (new_timeline_end - old_timeline_start) * ratio;
+fn serialized_timeline_duration_seconds(slice: &VideoSlice, otio_rate: f64) -> f64 {
+	let timeline_duration = (slice.timeline_end - slice.timeline_start).max(0.0);
+	let min_timeline_duration = if otio_rate > 0.0 {
+		1.0 / otio_rate
+	} else {
+		0.0
+	};
+	snap_seconds_to_timeline_frames(timeline_duration, otio_rate).max(min_timeline_duration)
 }
-
 fn make_gap(duration_secs: f64, rate: f64) -> anyhow::Result<serde_json::Value> {
 	let source_range = TimeRange::new(
 		otio_time_from_seconds(0.0, rate),
@@ -1060,19 +1182,34 @@ fn parse_fps_fraction(value: &str) -> Option<f64> {
 }
 
 fn patch_otio_for_kdenlive(value: &mut Value) {
+	let mut duration_cache: HashMap<String, Option<f64>> = HashMap::new();
+	patch_otio_for_kdenlive_inner(value, &mut duration_cache);
+	reorder_otio_keys_like_library_export(value);
+}
+
+fn patch_otio_for_kdenlive_inner(
+	value: &mut Value,
+	duration_cache: &mut HashMap<String, Option<f64>>,
+) {
 	match value {
 		Value::Array(arr) => {
 			for v in arr {
-				patch_otio_for_kdenlive(v);
+				patch_otio_for_kdenlive_inner(v, duration_cache);
 			}
 		}
 		Value::Object(map) => {
+			let schema = map
+				.get("OTIO_SCHEMA")
+				.and_then(|v| v.as_str())
+				.unwrap_or_default()
+				.to_string();
 			let is_clip2 = map
 				.get("OTIO_SCHEMA")
 				.and_then(|v| v.as_str())
 				.map(|s| s == "Clip.2")
 				.unwrap_or(false);
 			if is_clip2 {
+				map.entry("color".to_string()).or_insert(Value::Null);
 				if let Some(media_ref) = map.remove("media_reference") {
 					let mut refs = serde_json::Map::new();
 					refs.insert("DEFAULT_MEDIA".to_string(), media_ref);
@@ -1095,11 +1232,231 @@ fn patch_otio_for_kdenlive(value: &mut Value) {
 				}
 			}
 
+			if is_clip2 {
+				let clip_rate = map
+					.get("source_range")
+					.and_then(Value::as_object)
+					.and_then(|r| r.get("start_time").or_else(|| r.get("duration")))
+					.and_then(Value::as_object)
+					.and_then(|t| t.get("rate"))
+					.and_then(Value::as_f64)
+					.filter(|v| v.is_finite() && *v > 0.0)
+					.unwrap_or(DEFAULT_OTIO_RATE);
+
+				if let Some(media_refs) = map.get_mut("media_references").and_then(Value::as_object_mut)
+				{
+					if let Some(default_media) = media_refs
+						.get_mut("DEFAULT_MEDIA")
+						.and_then(Value::as_object_mut)
+					{
+						let is_external_ref = default_media
+							.get("OTIO_SCHEMA")
+							.and_then(Value::as_str)
+							.map(|s| s == "ExternalReference.1")
+							.unwrap_or(false);
+						let has_available_range = default_media
+							.get("available_range")
+							.map(|v| !v.is_null())
+							.unwrap_or(false);
+
+						if is_external_ref && !has_available_range {
+							if let Some(target_url) = default_media
+								.get("target_url")
+								.and_then(Value::as_str)
+							{
+								if let Some(duration_secs) =
+									probe_media_duration_cached(target_url, duration_cache)
+								{
+									default_media.insert(
+										"available_range".to_string(),
+										json!({
+											"OTIO_SCHEMA": "TimeRange.1",
+											"start_time": {
+												"OTIO_SCHEMA": "RationalTime.1",
+												"value": 0.0,
+												"rate": clip_rate,
+											},
+											"duration": {
+												"OTIO_SCHEMA": "RationalTime.1",
+												"value": quantize_otio_frame_value(duration_secs * clip_rate),
+												"rate": clip_rate,
+											},
+										}),
+									);
+								}
+							}
+						}
+					}
+				}
+			}
+
+			if schema == "Gap.1" {
+				map.entry("color".to_string()).or_insert(Value::Null);
+			}
+
+			if schema == "ExternalReference.1" {
+				map.entry("name".to_string())
+					.or_insert_with(|| Value::String(String::new()));
+			}
+
 			for v in map.values_mut() {
-				patch_otio_for_kdenlive(v);
+				patch_otio_for_kdenlive_inner(v, duration_cache);
 			}
 		}
 		_ => {}
+	}
+}
+
+fn reorder_otio_keys_like_library_export(value: &mut Value) {
+	match value {
+		Value::Array(arr) => {
+			for item in arr {
+				reorder_otio_keys_like_library_export(item);
+			}
+		}
+		Value::Object(map) => {
+			for child in map.values_mut() {
+				reorder_otio_keys_like_library_export(child);
+			}
+
+			let schema = map
+				.get("OTIO_SCHEMA")
+				.and_then(Value::as_str)
+				.unwrap_or_default();
+			let Some(order) = library_key_order_for_schema(schema) else {
+				return;
+			};
+
+			let mut old = std::mem::take(map);
+			let mut reordered = serde_json::Map::new();
+			for key in order {
+				if let Some(value) = old.remove(*key) {
+					reordered.insert((*key).to_string(), value);
+				}
+			}
+			for (key, value) in old {
+				reordered.insert(key, value);
+			}
+			*map = reordered;
+		}
+		_ => {}
+	}
+}
+
+fn library_key_order_for_schema(schema: &str) -> Option<&'static [&'static str]> {
+	match schema {
+		"Timeline.1" => Some(&[
+			"OTIO_SCHEMA",
+			"metadata",
+			"name",
+			"global_start_time",
+			"tracks",
+		]),
+		"Stack.1" => Some(&[
+			"OTIO_SCHEMA",
+			"metadata",
+			"name",
+			"source_range",
+			"effects",
+			"markers",
+			"enabled",
+			"color",
+			"children",
+		]),
+		"Track.1" => Some(&[
+			"OTIO_SCHEMA",
+			"metadata",
+			"name",
+			"source_range",
+			"effects",
+			"markers",
+			"enabled",
+			"color",
+			"children",
+			"kind",
+		]),
+		"Clip.2" => Some(&[
+			"OTIO_SCHEMA",
+			"metadata",
+			"name",
+			"source_range",
+			"effects",
+			"markers",
+			"enabled",
+			"color",
+			"media_references",
+			"active_media_reference_key",
+		]),
+		"Gap.1" => Some(&[
+			"OTIO_SCHEMA",
+			"metadata",
+			"name",
+			"source_range",
+			"effects",
+			"markers",
+			"enabled",
+			"color",
+		]),
+		"ExternalReference.1" => Some(&[
+			"OTIO_SCHEMA",
+			"metadata",
+			"name",
+			"available_range",
+			"available_image_bounds",
+			"target_url",
+		]),
+		_ => None,
+	}
+}
+
+fn probe_media_duration_cached(
+	target_url: &str,
+	duration_cache: &mut HashMap<String, Option<f64>>,
+) -> Option<f64> {
+	if let Some(cached) = duration_cache.get(target_url) {
+		return *cached;
+	}
+
+	let path = media_path_from_target_url(target_url);
+	let duration = probe_media_duration(&path);
+	duration_cache.insert(target_url.to_string(), duration);
+	duration
+}
+
+fn media_path_from_target_url(target_url: &str) -> PathBuf {
+	if target_url.starts_with("file://") {
+		if let Ok(url) = url::Url::parse(target_url) {
+			if let Ok(path) = url.to_file_path() {
+				return path;
+			}
+		}
+	}
+	PathBuf::from(target_url)
+}
+
+fn probe_media_duration(path: &Path) -> Option<f64> {
+	let src = path.to_str()?;
+	let output = Command::new("ffprobe")
+		.args([
+			"-v",
+			"error",
+			"-show_entries",
+			"format=duration",
+			"-of",
+			"default=noprint_wrappers=1:nokey=1",
+			src,
+		])
+		.output()
+		.ok()?;
+	if !output.status.success() {
+		return None;
+	}
+	let out = std::str::from_utf8(&output.stdout).ok()?.trim();
+	let duration: f64 = out.parse().ok()?;
+	if duration.is_finite() && duration > 0.0 {
+		Some(duration)
+	} else {
+		None
 	}
 }
 
@@ -1195,27 +1552,7 @@ fn format_youtube_timecode(seconds: f64) -> String {
 
 fn path_to_target_url(path: &Path) -> String {
 	let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-	let raw = resolved.to_string_lossy().replace('\\', "/");
-	let has_non_ascii = raw.chars().any(|c| !c.is_ascii());
-
-	if has_non_ascii {
-		if raw.starts_with('/') {
-			format!("file://{raw}")
-		} else {
-			format!("file:///{raw}")
-		}
-	} else {
-		match url::Url::from_file_path(&resolved) {
-			Ok(url) => url.to_string(),
-			Err(_) => {
-				if raw.starts_with('/') {
-					format!("file://{raw}")
-				} else {
-					format!("file:///{raw}")
-				}
-			}
-		}
-	}
+	resolved.to_string_lossy().replace('\\', "/")
 }
 
 fn clip_name(path: &Path) -> String {

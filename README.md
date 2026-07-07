@@ -51,41 +51,6 @@ OTIO timestamps are written in frames (`RationalTime.value`) using selected FPS 
 
 If FPS can not be detected, exporter falls back to `25.0`.
 
-### Render settings mapping
-
-Exporter uses current REAPER render settings:
-
-- Render bounds
-    - Entire project
-    - Custom bounds
-    - Time selection
-    - All regions
-    - Selected regions (uses region selection flag)
-    - Selected items
-- Render modes
-    - Master mix
-    - Stems
-    - Master + stems
-    - Render matrix
-
-For Render Matrix mode, exported tracks are taken from each region's render matrix (`rendered tracks`), not from selected tracks.
-
-### Timeline content rules
-
-- Uses only `VIDEO` items from active/rendered tracks.
-- Trims items to render bounds.
-- For overlaps/crossfades on a track, left item is trimmed to right item start.
-- If take has stretch markers, item is split into multiple OTIO clips with corresponding local time scaling.
-- Take playback rate is also applied as OTIO `LinearTimeWarp`.
-
-### Audio file behavior
-
-Exporter checks if render target audio file exists.
-
-- If file is missing, exporter asks whether to render project audio now.
-- If user agrees, it runs REAPER "Render project, using the most recent render settings" action.
-- Existing render target audio is added as OTIO audio track.
-
 ### Output files
 
 For each render target, exporter writes OTIO file next to it:

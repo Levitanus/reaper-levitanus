@@ -40,7 +40,6 @@ eframe = { version = "0.31", default-features = false, features = [
     "wayland",       # To support Linux (and CI)
     "x11",
 ] }
-otio-rs = {git = "https://github.com/Levitanus/otio-rs"}
 
 [lib]
 crate-type = ["lib"]
