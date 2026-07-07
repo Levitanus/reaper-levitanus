@@ -11,6 +11,9 @@ use reaper_levitanus::{
     envelope_snap::register_envelope_actions,
     ffmpeg::ffmpeg_gui,
     normalization::normalize_all_takes_on_selected_items,
+    otio_export::{
+        export_otio_project, export_youtube_timecodes, set_project_fps, OtioFpsPolicy,
+    },
 };
 
 use std::error::Error;
@@ -46,16 +49,6 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         Err(err) => error_box("can not register envelope actions", err.to_string()),
         Ok(_) => (),
     }
-    // let res = rpr.register_action(
-    //     "LEVITANUS_FFMPEG_RENDER_ALL",
-    //     "render project video",
-    //     |_: i32| render_video(),
-    //     None,
-    // );
-    // match res {
-    //     Err(err) => error_box("can not register render video", err.to_string()),
-    //     Ok(_) => (),
-    // }
     let res = rpr.register_action(
         "LEVITANUS_FFMPEG_GUI",
         "ffmpeg gui",
@@ -64,6 +57,61 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
     );
     match res {
         Err(err) => error_box("can not register ffmpeg gui", err.to_string()),
+        Ok(_) => (),
+    }
+
+    let res = rpr.register_action(
+        "LEVITANUS_OTIO_EXPORT",
+        "export OTIO timelines",
+        |_: i32| export_otio_project(),
+        None,
+    );
+    match res {
+        Err(err) => error_box("can not register OTIO export", err.to_string()),
+        Ok(_) => (),
+    }
+
+    let res = rpr.register_action(
+        "LEVITANUS_OTIO_FPS_MEDIAN",
+        "set OTIO FPS to median",
+        |_: i32| set_project_fps(OtioFpsPolicy::MedianVideo),
+        None,
+    );
+    match res {
+        Err(err) => error_box("can not register OTIO FPS median", err.to_string()),
+        Ok(_) => (),
+    }
+
+    let res = rpr.register_action(
+        "LEVITANUS_OTIO_FPS_PROJECT",
+        "set OTIO FPS to Project FPS",
+        |_: i32| set_project_fps(OtioFpsPolicy::Project),
+        None,
+    );
+    match res {
+        Err(err) => error_box("can not register OTIO FPS project", err.to_string()),
+        Ok(_) => (),
+    }
+
+    let res = rpr.register_action(
+        "LEVITANUS_OTIO_FPS_FIRST_VIDEO",
+        "set OTIO FPS to first video in timeline",
+        |_: i32| set_project_fps(OtioFpsPolicy::FirstVideo),
+        None,
+    );
+    match res {
+        Err(err) => error_box("can not register OTIO FPS first video", err.to_string()),
+        Ok(_) => (),
+    }
+
+    let res = rpr.register_action(
+        "LEVITANUS_OTIO_YOUTUBE_TIMECODES",
+        "export YouTube timecodes from markers",
+        |_: i32| export_youtube_timecodes(),
+        None,
+    );
+    match res {
+        Err(err) => error_box("can not register OTIO timecodes export", err.to_string()),
         Ok(_) => (),
     }
 

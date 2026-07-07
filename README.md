@@ -10,9 +10,90 @@ Currently adds actions:
 - normalize_all_takes_on_selected_items
 - normalize_all_takes_on_selected_items (common gain)
 - Take Pitch envelope snap *
-    * Set snap for pitch envelope, or make it default, or turn off
+    - Set snap for pitch envelope, or make it default, or turn off
 - Set Take pitch envelope range
 - ffmpeg gui
-    * opens dialog for setting up filters , settings and rendering project video with FFMPEG. 
-    * For now in early alpha stage.
-    * the better to work with ffmpeg dialog, while running Reaper from command line \ terminal with a command: `RUST_LOG=error,reaper_levitanus=debug RUST_BACKTRACE=1 reaper`. It will produce a lot of helpful debug information.
+    - Opens dialog for setting up filters, settings and rendering project video with FFMPEG.
+    - For now in early alpha stage.
+    - Better to run Reaper from terminal while working with ffmpeg dialog:
+        `RUST_LOG=error,reaper_levitanus=debug RUST_BACKTRACE=1 reaper`
+    - It will produce a lot of helpful debug information.
+- export OTIO timelines
+- set OTIO FPS to median
+- set OTIO FPS to Project FPS
+- set OTIO FPS to first video in timeline
+- export YouTube timecodes from markers
+
+## OTIO export
+
+The plugin can export REAPER timeline(s) to OpenTimelineIO `.otio` files.
+
+### Actions
+
+- `export OTIO timelines`
+    - Exports OTIO timelines using current REAPER render settings and render targets.
+- `set OTIO FPS to median`
+    - Stores FPS policy in project ExtState. This is the default policy.
+- `set OTIO FPS to Project FPS`
+    - Stores FPS policy in project ExtState.
+- `set OTIO FPS to first video in timeline`
+    - Stores FPS policy in project ExtState.
+- `export YouTube timecodes from markers`
+    - Exports marker timecodes per render target and render bounds into `render_target_name.txt`.
+
+### FPS policy
+
+OTIO timestamps are written in frames (`RationalTime.value`) using selected FPS as `RationalTime.rate`.
+
+- Median video (default): computes FPS for all source video files used in exported timeline and takes median.
+- Project FPS: uses FPS from the first render target file (if available).
+- First video: uses FPS from the first detected source video in exported timeline.
+
+If FPS can not be detected, exporter falls back to `25.0`.
+
+### Render settings mapping
+
+Exporter uses current REAPER render settings:
+
+- Render bounds
+    - Entire project
+    - Custom bounds
+    - Time selection
+    - All regions
+    - Selected regions (uses region selection flag)
+    - Selected items
+- Render modes
+    - Master mix
+    - Stems
+    - Master + stems
+    - Render matrix
+
+For Render Matrix mode, exported tracks are taken from each region's render matrix (`rendered tracks`), not from selected tracks.
+
+### Timeline content rules
+
+- Uses only `VIDEO` items from active/rendered tracks.
+- Trims items to render bounds.
+- For overlaps/crossfades on a track, left item is trimmed to right item start.
+- If take has stretch markers, item is split into multiple OTIO clips with corresponding local time scaling.
+- Take playback rate is also applied as OTIO `LinearTimeWarp`.
+
+### Audio file behavior
+
+Exporter checks if render target audio file exists.
+
+- If file is missing, exporter asks whether to render project audio now.
+- If user agrees, it runs REAPER "Render project, using the most recent render settings" action.
+- Existing render target audio is added as OTIO audio track.
+
+### Output files
+
+For each render target, exporter writes OTIO file next to it:
+
+- render target: `.../my_render.wav`
+- otio output: `.../my_render.otio`
+
+YouTube timecodes action writes a separate text file for each render target:
+
+- render target: `.../my_render.wav`
+- timecodes output: `.../my_render.txt`
