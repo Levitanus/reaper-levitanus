@@ -6,7 +6,7 @@ version = "0.0.1"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rea-rs = {workspace = true}
+rea-rs = {workspace = true, features = ["egui-baseview"]}
 rea-rs-low = {workspace = true}
 rea-rs-macros = {workspace = true}
 

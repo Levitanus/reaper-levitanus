@@ -1,9 +1,10 @@
 use thiserror::Error;
 
 pub mod envelope_snap;
-pub mod ffmpeg;
+// pub mod ffmpeg;
 pub mod normalization;
 pub mod otio_export;
+pub mod ffmpeg_new;
 
 #[derive(Debug, Error)]
 pub enum LevitanusError {
