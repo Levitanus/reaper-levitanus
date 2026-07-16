@@ -13,16 +13,17 @@ Currently adds actions:
     - Set snap for pitch envelope, or make it default, or turn off
 - Set Take pitch envelope range
 - ffmpeg gui
-    - Opens dialog for setting up filters, settings and rendering project video with FFMPEG.
-    - For now in early alpha stage.
-    - Better to run Reaper from terminal while working with ffmpeg dialog:
-        `RUST_LOG=error,reaper_levitanus=debug RUST_BACKTRACE=1 reaper`
-    - It will produce a lot of helpful debug information.
+    - Opens dialog for setting up muxer codecs and render video for a project.
 - export OTIO timelines
 - set OTIO FPS to median
 - set OTIO FPS to Project FPS
 - set OTIO FPS to first video in timeline
 - export YouTube timecodes from markers
+
+## ffmpeg render
+For complex video editing the OTIO export should be used. Then pre-cuted video items could be perfectely edited in an appropriate video editor.
+
+ffmpeg render is made for quick encoding and generap music production purpose. It uses only one video source per video and could be used for a very quick audio substitution inside the already rendered and re-encoded videos. As well, as encoding them for perfect cuts.
 
 ## OTIO export
 
