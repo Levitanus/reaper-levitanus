@@ -9,7 +9,7 @@ use rea_rs_macros::reaper_extension_plugin;
 use reaper_levitanus::{
     // ffmpeg::{gui::gui, render_video},
     envelope_snap::register_envelope_actions,
-    ffmpeg::ffmpeg_gui,
+    ffmpeg_new::ffmpeg_gui,
     normalization::normalize_all_takes_on_selected_items,
     otio_export::{
         export_otio_project, export_youtube_timecodes, set_project_fps, OtioFpsPolicy,
@@ -51,7 +51,7 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
     }
     let res = rpr.register_action(
         "LEVITANUS_FFMPEG_GUI",
-        "ffmpeg gui",
+        "ffmpeg GUI",
         |_: i32| ffmpeg_gui(),
         None,
     );

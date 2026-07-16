@@ -2,15 +2,14 @@
 members = [
 "reaper-levitanus", 
 "test", 
-"plugin", 
-"front"
+"plugin"
 ]
 
 [workspace.dependencies]
-rea-rs = {git = "https://github.com/Levitanus/rea-rs"}
-rea-rs-low = {git = "https://github.com/Levitanus/rea-rs"}
-rea-rs-macros = {git = "https://github.com/Levitanus/rea-rs"}
-rea-rs-test = {git = "https://github.com/Levitanus/rea-rs"}
+rea-rs = {git = "https://github.com/Levitanus/rea-rs", branch = "gui"}
+rea-rs-low = {git = "https://github.com/Levitanus/rea-rs", branch = "gui"}
+rea-rs-macros = {git = "https://github.com/Levitanus/rea-rs", branch = "gui"}
+rea-rs-test = {git = "https://github.com/Levitanus/rea-rs", branch = "gui"}
 
 # rea-rs = {path = "../rea-rs/rea-rs"}
 # rea-rs-low = {path = "../rea-rs/low"}
