@@ -387,8 +387,9 @@ fn build_ffmpeg_command(job: &RenderJobDefinition) -> anyhow::Result<(Command, S
     ];
 
     if job.use_source_window {
-        let offset = timestamp_string(job.render_target.source_offset.as_secs_f64());
-        let duration = timestamp_string(render_duration_secs(&job.render_target.duration));
+        let stretch_ratio = job.render_target.stretch_ratio.abs().max(f64::EPSILON);
+        let offset = timestamp_string(job.render_target.source_offset.as_secs_f64() * stretch_ratio);
+        let duration = timestamp_string(render_duration_secs(&job.render_target.duration) * stretch_ratio);
         args.extend([
             "-ss".to_string(),
             offset,
@@ -409,6 +410,16 @@ fn build_ffmpeg_command(job: &RenderJobDefinition) -> anyhow::Result<(Command, S
         "-c:v".to_string(),
         job.video_codec.clone(),
     ]);
+
+    if job.use_source_window {
+        let stretch_ratio = job.render_target.stretch_ratio.abs().max(f64::EPSILON);
+        if (stretch_ratio - 1.0).abs() > f64::EPSILON {
+            args.extend([
+                "-vf".to_string(),
+                format!("setpts=PTS/{}", stretch_ratio),
+            ]);
+        }
+    }
 
     if job.video_codec == "libx264" || job.video_codec == "h264" {
         args.extend(["-crf".to_string(), "15".to_string()]);

@@ -20,6 +20,7 @@ pub(super) struct RenderTargetsBuild {
 pub(super) struct RenderTarget {
     pub(super) path: PathBuf,
     pub(super) video_source: Option<PathBuf>,
+    pub(super) stretch_ratio: f64,
     pub(super) availble_for_render: AvailbleForRender,
     pub(super) duration: Duration,
     pub(super) source_offset: SourceOffset,
@@ -149,6 +150,7 @@ fn build_render_target_from_plan(
                 return Ok(RenderTarget {
                     path: plan.render_target.clone(),
                     video_source: Some(source.filename()),
+                    stretch_ratio: take.play_rate().into(),
                     availble_for_render: AvailbleForRender::OutOfBounds(out_of_bounds),
                     duration,
                     source_offset: take.start_offset(),
@@ -159,6 +161,7 @@ fn build_render_target_from_plan(
             return Ok(RenderTarget {
                 path: plan.render_target.clone(),
                 video_source: Some(source.filename()),
+                stretch_ratio: take.play_rate().into(),
                 availble_for_render: AvailbleForRender::Ok,
                 duration,
                 source_offset,
@@ -169,6 +172,7 @@ fn build_render_target_from_plan(
     Ok(RenderTarget {
         path: plan.render_target.clone(),
         video_source: None,
+        stretch_ratio: 1.0,
         availble_for_render: AvailbleForRender::NoVideo,
         duration,
         source_offset: SourceOffset::from_secs_f64(0.0),
