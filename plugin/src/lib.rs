@@ -8,15 +8,9 @@ use rea_rs::{
 };
 use rea_rs_macros::reaper_extension_plugin;
 use reaper_levitanus::{
-    // ffmpeg::{gui::gui, render_video},
     background_render::{
-        create_bg_instrument, is_running, restore_default_state,
-        toggle_action as toggle_background_renderer,
-    },
-    envelope_snap::register_envelope_actions,
-    ffmpeg_new::ffmpeg_gui,
-    normalization::normalize_all_takes_on_selected_items,
-    otio_export::{export_otio_project, export_youtube_timecodes, set_project_fps, OtioFpsPolicy},
+        create_bg_instrument, is_running, restore_default_state, toggle_action as toggle_background_renderer,
+    }, envelope_snap::register_envelope_actions, ffmpeg_new::ffmpeg_gui, normalization::normalize_all_takes_on_selected_items, otio_export::{OtioFpsPolicy, export_otio_project, export_youtube_timecodes, set_project_fps},
 };
 
 use std::error::Error;
