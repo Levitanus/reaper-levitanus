@@ -320,7 +320,10 @@ fn execute_render_job(
                 false,
             )
         }
-        Err(error) => (Some(format!("failed waiting ffmpeg process: {error}")), false),
+        Err(error) => (
+            Some(format!("failed waiting ffmpeg process: {error}")),
+            false,
+        ),
     }
 }
 
@@ -388,14 +391,11 @@ fn build_ffmpeg_command(job: &RenderJobDefinition) -> anyhow::Result<(Command, S
 
     if job.use_source_window {
         let stretch_ratio = job.render_target.stretch_ratio.abs().max(f64::EPSILON);
-        let offset = timestamp_string(job.render_target.source_offset.as_secs_f64() * stretch_ratio);
-        let duration = timestamp_string(render_duration_secs(&job.render_target.duration) * stretch_ratio);
-        args.extend([
-            "-ss".to_string(),
-            offset,
-            "-t".to_string(),
-            duration,
-        ]);
+        let offset =
+            timestamp_string(job.render_target.source_offset.as_secs_f64() * stretch_ratio);
+        let duration =
+            timestamp_string(render_duration_secs(&job.render_target.duration) * stretch_ratio);
+        args.extend(["-ss".to_string(), offset, "-t".to_string(), duration]);
     }
 
     args.extend([
@@ -414,10 +414,7 @@ fn build_ffmpeg_command(job: &RenderJobDefinition) -> anyhow::Result<(Command, S
     if job.use_source_window {
         let stretch_ratio = job.render_target.stretch_ratio.abs().max(f64::EPSILON);
         if (stretch_ratio - 1.0).abs() > f64::EPSILON {
-            args.extend([
-                "-vf".to_string(),
-                format!("setpts=PTS/{}", stretch_ratio),
-            ]);
+            args.extend(["-vf".to_string(), format!("setpts=PTS/{}", stretch_ratio)]);
         }
     }
 

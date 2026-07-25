@@ -13,33 +13,33 @@ rea-rs-macros = {workspace = true}
 env_logger = {workspace = true}
 log = {workspace = true}
 
-fraction = {workspace = true, features=["with-serde-support"]}
+anyhow = {workspace = true}
+autopilot = {workspace = true}
+dyn-clone = {workspace = true}
+fraction = {workspace = true, features = ["with-serde-support"]}
 itertools = {workspace = true}
+lazy_static = {workspace = true}
 open = "3.2.0"
+path-absolutize = {workspace = true}
+regex = {workspace = true}
 serde = {workspace = true, features = ["derive"]}
 serde_json = {workspace = true}
+strum = {workspace = true, features = ["derive"]}
 thiserror = {workspace = true}
-anyhow = {workspace = true}
-regex = {workspace = true}
-lazy_static = {workspace = true}
-path-absolutize = {workspace = true}
-dyn-clone = {workspace = true}
-strum = {workspace = true, features=["derive"]}
-autopilot = {workspace = true}
 
-uuid = "1.8.0"
-url = "2.5.0"
 int-enum = "1.1.2"
+url = "2.5.0"
+uuid = {version = "1.8.0", features = ["v4"]}
 
+eframe = {version = "0.31", default-features = false, features = [
+  "accesskit", # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
+  "default_fonts", # Embed the default egui fonts.
+  "glow", # Use the glow rendering backend. Alternative: "wgpu".
+  "persistence", # Enable restoring app state when restarting the app.
+  "wayland", # To support Linux (and CI)
+  "x11",
+]}
 egui = "0.31"
-eframe = { version = "0.31", default-features = false, features = [
-    "accesskit",     # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
-    "default_fonts", # Embed the default egui fonts.
-    "glow",          # Use the glow rendering backend. Alternative: "wgpu".
-    "persistence",   # Enable restoring app state when restarting the app.
-    "wayland",       # To support Linux (and CI)
-    "x11",
-] }
 
 [lib]
 crate-type = ["lib"]

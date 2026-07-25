@@ -16,8 +16,8 @@ use anyhow::anyhow;
 use log::debug;
 use rea_rs::{
     gui::{self, DockableEguiWindow},
-    CommandId, ControlSurface, ExtState, MessageBoxType, MessageBoxValue, Mutable, Project,
-    Reaper, Track,
+    CommandId, ControlSurface, ExtState, MessageBoxType, MessageBoxValue, Mutable, Project, Reaper,
+    Track,
 };
 use serde::{Deserialize, Serialize};
 
@@ -493,45 +493,38 @@ impl FfmpegGuiSurface {
                 continue;
             }
 
-            let (input_video_path, output_path, use_source_window, video_codec) =
-                if persisted.use_rendered_video {
-                    let rendered_video_path = target.path.with_extension(&muxer);
-                    if !rendered_video_path.exists() {
-                        return Err(anyhow!(
-                            "use rendered video enabled, but source video does not exist: {}",
-                            rendered_video_path.display()
-                        ));
-                    }
-                    let output_path = with_suffix_before_extension(
-                        &rendered_video_path,
-                        " new_audio",
-                        Some(&muxer),
-                    );
-                    (
-                        rendered_video_path,
-                        output_path,
-                        false,
-                        "copy".to_string(),
-                    )
-                } else {
-                    let input_video_path = target
-                        .video_source
-                        .as_ref()
-                        .ok_or_else(|| anyhow!("render target has no linked video source"))?
-                        .clone();
-                    if !input_video_path.exists() {
-                        return Err(anyhow!(
-                            "video source does not exist: {}",
-                            input_video_path.display()
-                        ));
-                    }
-                    (
-                        input_video_path,
-                        target.path.with_extension(&muxer),
-                        true,
-                        selected_video_codec.clone(),
-                    )
-                };
+            let (input_video_path, output_path, use_source_window, video_codec) = if persisted
+                .use_rendered_video
+            {
+                let rendered_video_path = target.path.with_extension(&muxer);
+                if !rendered_video_path.exists() {
+                    return Err(anyhow!(
+                        "use rendered video enabled, but source video does not exist: {}",
+                        rendered_video_path.display()
+                    ));
+                }
+                let output_path =
+                    with_suffix_before_extension(&rendered_video_path, " new_audio", Some(&muxer));
+                (rendered_video_path, output_path, false, "copy".to_string())
+            } else {
+                let input_video_path = target
+                    .video_source
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("render target has no linked video source"))?
+                    .clone();
+                if !input_video_path.exists() {
+                    return Err(anyhow!(
+                        "video source does not exist: {}",
+                        input_video_path.display()
+                    ));
+                }
+                (
+                    input_video_path,
+                    target.path.with_extension(&muxer),
+                    true,
+                    selected_video_codec.clone(),
+                )
+            };
 
             jobs.push(RenderJobDefinition {
                 render_target: target,
@@ -770,8 +763,7 @@ fn ui_render_queue_controls(
 
         ui.label(format!(
             "{}/{}",
-            elements.render_state.finished_jobs,
-            elements.render_state.total_jobs
+            elements.render_state.finished_jobs, elements.render_state.total_jobs
         ));
     });
 
@@ -863,7 +855,11 @@ fn with_suffix_before_extension(path: &Path, suffix: &str, ext: Option<&str>) ->
         .to_string();
     let extension = ext
         .map(|value| value.to_string())
-        .or_else(|| path.extension().and_then(|e| e.to_str()).map(|s| s.to_string()))
+        .or_else(|| {
+            path.extension()
+                .and_then(|e| e.to_str())
+                .map(|s| s.to_string())
+        })
         .unwrap_or_default();
 
     let filename = if extension.is_empty() {

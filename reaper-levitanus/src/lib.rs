@@ -2,9 +2,11 @@ use thiserror::Error;
 
 pub mod envelope_snap;
 // pub mod ffmpeg;
+pub mod background_render;
+pub mod ffmpeg_new;
 pub mod normalization;
 pub mod otio_export;
-pub mod ffmpeg_new;
+pub mod utils;
 
 #[derive(Debug, Error)]
 pub enum LevitanusError {
@@ -22,6 +24,8 @@ pub enum LevitanusError {
     KeyError(String, String),
     #[error("ReaperError, original message: {0}")]
     Reaper(String),
-    #[error("ReaperError, original message: {0}")]
+    #[error("RenderError, original message: {0}")]
     Render(String),
+    #[error("TrackValidationError, Can not find track with GUID {0}")]
+    TrackValidationError(String),
 }

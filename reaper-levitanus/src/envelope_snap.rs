@@ -2,7 +2,7 @@ use std::error::Error;
 
 use int_enum::IntEnum;
 use log::{debug, info};
-use rea_rs::Reaper;
+use rea_rs::{ActionKind, Reaper};
 use regex::Regex;
 
 pub fn register_envelope_actions(rpr: &mut Reaper) -> Result<(), Box<dyn Error>> {
@@ -18,12 +18,14 @@ pub fn register_envelope_actions(rpr: &mut Reaper) -> Result<(), Box<dyn Error>>
     rpr.register_action(
         "LEVITANUS_PITCHEVN_SNAP_OFF",
         "Take Pitch envelope snap OFF (Levitanus)",
+        ActionKind::NotToggleable,
         move |_| envelope_snap_range(EnvelopeChange::Snap(EnvelopeSnap::Off), snap_re.clone()),
         None,
     )?;
     rpr.register_action(
         "LEVITANUS_PITCHEVN_SNAP_DEFAULT",
         "Take Pitch envelope snap DEFAULT (Levitanus)",
+        ActionKind::NotToggleable,
         move |_| {
             envelope_snap_range(
                 EnvelopeChange::Snap(EnvelopeSnap::Default),
@@ -35,6 +37,7 @@ pub fn register_envelope_actions(rpr: &mut Reaper) -> Result<(), Box<dyn Error>>
     rpr.register_action(
         "LEVITANUS_PITCHEVN_SNAP_SEMITONE",
         "Take Pitch envelope snap SEMITONE (Levitanus)",
+        ActionKind::NotToggleable,
         move |_| {
             envelope_snap_range(
                 EnvelopeChange::Snap(EnvelopeSnap::Semitone),
@@ -46,36 +49,42 @@ pub fn register_envelope_actions(rpr: &mut Reaper) -> Result<(), Box<dyn Error>>
     rpr.register_action(
         "LEVITANUS_PITCHEVN_SNAP_50_CENTS",
         "Take Pitch envelope snap 50 CENTS (Levitanus)",
+        ActionKind::NotToggleable,
         move |_| envelope_snap_range(EnvelopeChange::Snap(EnvelopeSnap::Cents50), snap_50.clone()),
         None,
     )?;
     rpr.register_action(
         "LEVITANUS_PITCHEVN_SNAP_25_CENTS",
         "Take Pitch envelope snap 25 CENTS (Levitanus)",
+        ActionKind::NotToggleable,
         move |_| envelope_snap_range(EnvelopeChange::Snap(EnvelopeSnap::Cents25), snap_25.clone()),
         None,
     )?;
     rpr.register_action(
         "LEVITANUS_PITCHEVN_SNAP_10_CENTS",
         "Take Pitch envelope snap 10 CENTS (Levitanus)",
+        ActionKind::NotToggleable,
         move |_| envelope_snap_range(EnvelopeChange::Snap(EnvelopeSnap::Cents10), snap_10.clone()),
         None,
     )?;
     rpr.register_action(
         "LEVITANUS_PITCHEVN_SNAP_5_CENTS",
         "Take Pitch envelope snap 5 CENTS (Levitanus)",
+        ActionKind::NotToggleable,
         move |_| envelope_snap_range(EnvelopeChange::Snap(EnvelopeSnap::Cents5), snap_5.clone()),
         None,
     )?;
     rpr.register_action(
         "LEVITANUS_PITCHEVN_SNAP_1_CENT",
         "Take Pitch envelope snap 1 CENT (Levitanus)",
+        ActionKind::NotToggleable,
         move |_| envelope_snap_range(EnvelopeChange::Snap(EnvelopeSnap::Cent), snap_1.clone()),
         None,
     )?;
     rpr.register_action(
         "LEVITANUS_PITCHEVN_RANGE",
         "Set Take Pitch envelope range (Levitanus)",
+        ActionKind::NotToggleable,
         move |_| {
             let rpr = Reaper::get();
             let resp =
