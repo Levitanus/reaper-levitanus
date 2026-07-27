@@ -1,14 +1,15 @@
-use std::{
-    cell::RefCell,
-    collections::HashSet,
-    error::Error,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{cell::RefCell, collections::HashSet, error::Error, sync::Arc, time::Duration};
 
 use rea_rs::{ActionHook, ControlSurface, ExtState, Reaper, Timer};
+use serde::{Deserialize, Serialize};
 
-use crate::{LevitanusError, background_render::track_management::{TrackRole, align_all_instrument_track_orders, rebuild_instrument_list, resolve_unpaired_tracks}, utils::CachedTrack};
+use crate::{
+    background_render::track_management::{
+        align_all_instrument_track_orders, rebuild_instrument_list, resolve_unpaired_tracks,
+        TrackRole,
+    },
+    utils::CachedTrack,
+};
 
 const ID_STRING: &str = "BackgroudRenderer";
 const TIMER_ID_STRING: &str = "BackgroudRendererTimer";
@@ -21,36 +22,76 @@ const ROLE_KEY: &str = "role";
 mod track_management;
 pub use track_management::{create_bg_instrument, make_track_rendered};
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize)]
 enum Task {
     RebuildInstrumentList = 0,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+struct TaskQueue(HashSet<Task>);
+
+impl TaskQueue {
+    fn insert(&mut self, task: Task) {
+        self.0.insert(task);
+    }
+
+    fn drain(&mut self) -> Vec<Task> {
+        self.0.drain().collect()
+    }
+    fn ext_state() -> ExtState<'static, Self, Reaper> {
+        ExtState::<BackgroundRendererState, Reaper>::existing(
+            EXT_SECTION,
+            "task_queue",
+            false,
+            Reaper::get(),
+            None,
+        )
+    }
+
+    pub(crate) fn queue_task(task: Task) {
+        let mut state = Self::ext_state();
+        let mut queue = state.get().unwrap_or(None).unwrap_or(TaskQueue::default());
+        queue.insert(task);
+        state.set(queue);
+    }
+
+    pub(crate) fn load() -> Self {
+        Self::ext_state()
+            .get()
+            .unwrap_or(None)
+            .unwrap_or(Self::default())
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 struct BackgroundRendererState {
     instruments: Vec<RenderedInstrument>,
     unpaired_tracks: Vec<(u128, TrackRole, CachedTrack)>,
-    task_queue: Mutex<HashSet<Task>>,
     is_performing: bool,
 }
-
-#[derive(Debug)]
-struct BackgroundRendererSurface {
-    state: Arc<Mutex<BackgroundRendererState>>,
-}
-
-#[derive(Debug)]
-struct BackgroundRendererTimer {
-    state: Arc<Mutex<BackgroundRendererState>>,
-}
-
 impl BackgroundRendererState {
-    fn queue_task(&self, task: Task) {
-        if let Ok(mut queue) = self.task_queue.lock() {
-            queue.insert(task);
-        }
+    fn load() -> anyhow::Result<Self> {
+        Ok(Self::ext_state().get()?.unwrap_or(Self::default()))
+    }
+    fn ext_state() -> ExtState<'static, Self, Reaper> {
+        ExtState::<BackgroundRendererState, Reaper>::existing(
+            EXT_SECTION,
+            "BackgroundRendererState",
+            false,
+            Reaper::get(),
+            1024 * 10,
+        )
+    }
+    fn save(&self) {
+        Self::ext_state().set(self.clone());
     }
 }
+
+#[derive(Debug)]
+struct BackgroundRendererSurface {}
+
+#[derive(Debug)]
+struct BackgroundRendererTimer {}
 
 impl Timer for BackgroundRendererTimer {
     fn run(&mut self) -> Result<(), Box<dyn Error>> {
@@ -59,52 +100,31 @@ impl Timer for BackgroundRendererTimer {
         if !pr.is_stopped() {
             return Ok(());
         }
+        let mut state = BackgroundRendererState::load()?;
 
-        let tasks: Vec<Task> = {
-            let mut state = self
-                .state
-                .lock()
-                .map_err(|e| LevitanusError::Poison(e.to_string()))?;
-            state.is_performing = true;
-            state
-                .task_queue
-                .lock()
-                .map(|mut queue| queue.drain().collect())
-                .unwrap_or_default()
-        };
+        state.is_performing = true;
+        state.save();
+        let tasks: Vec<Task> = TaskQueue::load().drain();
 
         for task in tasks {
             match task {
                 Task::RebuildInstrumentList => {
                     let (mut instruments, unpaired_tracks) = rebuild_instrument_list()?;
                     align_all_instrument_track_orders(&mut instruments)?;
-                    let mut state = self
-                        .state
-                        .lock()
-                        .map_err(|e| LevitanusError::Poison(e.to_string()))?;
                     state.instruments = instruments;
                     state.unpaired_tracks = unpaired_tracks;
                 }
             }
         }
 
-        let mut local_unpaired_tracks = {
-            let mut state = self
-                .state
-                .lock()
-                .map_err(|e| LevitanusError::Poison(e.to_string()))?;
-            std::mem::take(&mut state.unpaired_tracks)
-        };
+        let mut local_unpaired_tracks = std::mem::take(&mut state.unpaired_tracks);
 
         if !local_unpaired_tracks.is_empty() {
             resolve_unpaired_tracks(&mut local_unpaired_tracks, rpr, pr)?;
         }
 
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|e| LevitanusError::Poison(e.to_string()))?;
         state.is_performing = false;
+        state.save();
         Ok(())
     }
 
@@ -131,18 +151,14 @@ impl ControlSurface for BackgroundRendererSurface {
     }
 
     fn set_track_list_change(&self) -> anyhow::Result<()> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|e| LevitanusError::Poison(e.to_string()))?;
-        if !state.is_performing {
-            state.queue_task(Task::RebuildInstrumentList);
+        if !BackgroundRendererState::load()?.is_performing {
+            TaskQueue::queue_task(Task::RebuildInstrumentList);
         }
         Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct RenderedInstrument {
     uuid: u128,
     bus: CachedTrack,
@@ -179,19 +195,9 @@ pub fn set_enabled(enabled: bool) -> Result<(), Box<dyn Error>> {
     let running = rpr.has_control_surface(&id);
 
     if enabled && !running {
-        let state = Arc::new(Mutex::new(BackgroundRendererState {
-            instruments: Vec::new(),
-            unpaired_tracks: Vec::new(),
-            task_queue: Mutex::new(HashSet::new()),
-            is_performing: false,
-        }));
-        if let Ok(state) = state.lock() {
-            state.queue_task(Task::RebuildInstrumentList);
-        }
-        let cs = BackgroundRendererSurface {
-            state: state.clone(),
-        };
-        let timer = BackgroundRendererTimer { state };
+        TaskQueue::queue_task(Task::RebuildInstrumentList);
+        let cs = BackgroundRendererSurface {};
+        let timer = BackgroundRendererTimer {};
         rpr.register_control_surface(Arc::new(RefCell::new(cs)));
         rpr.register_timer(Arc::new(RefCell::new(timer)));
     } else if !enabled && running {

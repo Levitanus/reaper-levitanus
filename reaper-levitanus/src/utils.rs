@@ -1,7 +1,7 @@
 use log::debug;
 use rea_rs::{
-    AutomationMode, FXParent, GenericSend, GenericSendMut, HardwareSend, Immutable, Mutable, Pan,
-    PanLaw, ProbablyMutable, Reaper, SendDestChannels, SendIntType, SendMIDIProps, SendMode,
+    AutomationMode, GenericSend, GenericSendMut, HardwareSend, Immutable, Mutable, Pan, PanLaw,
+    ProbablyMutable, Reaper, SendDestChannels, SendIntType, SendMIDIProps, SendMode,
     SendSourceChannels, SendType, Track, TrackReceive, TrackSend, Volume, GUID,
 };
 use serde::{Deserialize, Serialize};
