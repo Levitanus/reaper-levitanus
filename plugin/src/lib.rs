@@ -9,7 +9,7 @@ use rea_rs::{
 use rea_rs_macros::reaper_extension_plugin;
 use reaper_levitanus::{
     background_render::{
-        create_bg_instrument, is_running, restore_default_state, toggle_action as toggle_background_renderer,
+        create_bg_instrument, is_running, make_track_rendered, restore_default_state, toggle_action as toggle_background_renderer,
     }, envelope_snap::register_envelope_actions, ffmpeg_new::ffmpeg_gui, normalization::normalize_all_takes_on_selected_items, otio_export::{OtioFpsPolicy, export_otio_project, export_youtube_timecodes, set_project_fps},
 };
 
@@ -87,7 +87,19 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         None,
     );
     match res {
-        Err(err) => error_box("can not register OTIO export", err.to_string()),
+        Err(err) => error_box("can not register create BackgroundRenderer instrument", err.to_string()),
+        Ok(_) => (),
+    }
+
+    let res = rpr.register_action(
+        "LEVITANUS_BG_RENDER_ADD_TRACK",
+        "add track to BackgroundRenderer",
+        ActionKind::NotToggleable,
+        |hook| make_track_rendered(hook),
+        None,
+    );
+    match res {
+        Err(err) => error_box("can not register add track to BackgroundRenderer", err.to_string()),
         Ok(_) => (),
     }
 

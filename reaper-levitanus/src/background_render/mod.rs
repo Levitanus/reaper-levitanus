@@ -19,7 +19,7 @@ const UUID_KEY: &str = "uuid";
 const ROLE_KEY: &str = "role";
 
 mod track_management;
-pub use track_management::create_bg_instrument;
+pub use track_management::{create_bg_instrument, make_track_rendered};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 enum Task {
