@@ -88,12 +88,12 @@ impl BackgroundRendererState {
 }
 
 #[derive(Debug)]
-struct BackgroundRendererSurface {}
+struct BGRControlSurface {}
 
 #[derive(Debug)]
-struct BackgroundRendererTimer {}
+struct MainLoop {}
 
-impl Timer for BackgroundRendererTimer {
+impl Timer for MainLoop {
     fn run(&mut self) -> Result<(), Box<dyn Error>> {
         let rpr = Reaper::get_mut();
         let pr = rpr.current_project();
@@ -137,11 +137,7 @@ impl Timer for BackgroundRendererTimer {
     }
 }
 
-impl ControlSurface for BackgroundRendererSurface {
-    fn run(&mut self) -> anyhow::Result<()> {
-        Ok(())
-    }
-
+impl ControlSurface for BGRControlSurface {
     fn get_type_string(&self) -> String {
         ID_STRING.to_string()
     }
@@ -196,8 +192,8 @@ pub fn set_enabled(enabled: bool) -> Result<(), Box<dyn Error>> {
 
     if enabled && !running {
         TaskQueue::queue_task(Task::RebuildInstrumentList);
-        let cs = BackgroundRendererSurface {};
-        let timer = BackgroundRendererTimer {};
+        let cs = BGRControlSurface {};
+        let timer = MainLoop {};
         rpr.register_control_surface(Arc::new(RefCell::new(cs)));
         rpr.register_timer(Arc::new(RefCell::new(timer)));
     } else if !enabled && running {

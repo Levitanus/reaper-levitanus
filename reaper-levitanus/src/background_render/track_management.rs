@@ -18,6 +18,24 @@ use crate::{
     LevitanusError,
 };
 
+trait BGRenderTrack
+where
+    Self: HasExtState + Sized,
+{
+    /// If Track belongs to BGR, returns uuid and role
+    fn belongs_to_bgr(&self) -> Option<(u128, TrackRole)> {
+        if let Some(uid) = ExtState::load_value(EXT_SECTION, UUID_KEY, self, None).unwrap_or(None) {
+            if let Some(role) =
+                ExtState::load_value(EXT_SECTION, ROLE_KEY, self, None).unwrap_or(None)
+            {
+                return Some((uid, role));
+            }
+        }
+        None
+    }
+}
+impl<'a> BGRenderTrack for Track<'a, Mutable> {}
+
 pub(crate) fn rebuild_instrument_list(
 ) -> anyhow::Result<(Vec<RenderedInstrument>, Vec<(u128, TrackRole, CachedTrack)>)> {
     let rpr = Reaper::get_mut();
@@ -26,27 +44,14 @@ pub(crate) fn rebuild_instrument_list(
     let mut rendered = HashMap::new();
     let mut instruments = HashMap::new();
     pr.iter_tracks_mut(|track| {
-        if let Some(uid) =
-            ExtState::<u128, Track<Mutable>>::new(EXT_SECTION, "uuid", None, true, &track, None)
-                .get()?
-        {
-            if let Some(role) = ExtState::<TrackRole, Track<Mutable>>::new(
-                EXT_SECTION,
-                "role",
-                None,
-                true,
-                &track,
-                None,
-            )
-            .get()?
-            {
-                match role {
-                    TrackRole::Bus => buses.insert(uid, CachedTrack::from(track)),
-                    TrackRole::Instrument => instruments.insert(uid, CachedTrack::from(track)),
-                    TrackRole::Rendered => rendered.insert(uid, CachedTrack::from(track)),
-                };
-            }
+        if let Some((uid, role)) = track.belongs_to_bgr() {
+            match role {
+                TrackRole::Bus => buses.insert(uid, CachedTrack::from(track)),
+                TrackRole::Instrument => instruments.insert(uid, CachedTrack::from(track)),
+                TrackRole::Rendered => rendered.insert(uid, CachedTrack::from(track)),
+            };
         }
+
         Ok(())
     })?;
 
@@ -71,7 +76,6 @@ pub(crate) fn rebuild_instrument_list(
     debug!("unmatched_buses: {:#?}", unmatched_buses);
     debug!("rendered: {:#?}", rendered);
     debug!("instruments: {:#?}", instruments);
-
 
     let mut unpaired_tracks = unmatched_buses
         .into_iter()
@@ -224,25 +228,11 @@ fn align_instrument_track_order_by_uuid(uuid: u128) -> anyhow::Result<()> {
     let mut bus = None;
     let mut rendered = None;
     pr.iter_tracks_mut(|track| {
-        if let Some(track_uuid) =
-            ExtState::<u128, Track<Mutable>>::new(EXT_SECTION, UUID_KEY, None, true, &track, None)
-                .get()?
-        {
+        if let Some((track_uuid, track_role)) = track.belongs_to_bgr() {
             if track_uuid != uuid {
                 return Ok(());
             }
-            match ExtState::<TrackRole, Track<Mutable>>::new(
-                EXT_SECTION,
-                ROLE_KEY,
-                None,
-                true,
-                &track,
-                None,
-            )
-            .get()?
-            .ok_or(LevitanusError::Unexpected(
-                "no ExtState for role on the backgroundrendered track".to_string(),
-            ))? {
+            match track_role {
                 TrackRole::Bus => bus = Some(CachedTrack::from(track)),
                 TrackRole::Instrument => instrument = Some(CachedTrack::from(track)),
                 TrackRole::Rendered => rendered = Some(CachedTrack::from(track)),
