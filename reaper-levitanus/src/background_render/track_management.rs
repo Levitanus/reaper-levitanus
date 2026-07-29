@@ -6,7 +6,7 @@ use std::{
 
 use log::debug;
 use rea_rs::{
-    ActionHook, ExtState, FXMut, FXParent, HasExtState, Mutable, Project, Reaper, Track, UndoFlags,
+    ActionHook, ExtState, FXParent, HasExtState, Project, Reaper, ReaperResult, Track, UndoFlags,
     FX,
 };
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,7 @@ use crate::{
     LevitanusError,
 };
 
-trait BGRenderTrack
+pub(crate) trait BGRenderTrack
 where
     Self: HasExtState + Sized,
 {
@@ -33,27 +33,32 @@ where
         }
         None
     }
+
+    /// Arm instrument for recording, bypassing rendered track
+    fn monitor(&mut self, rec_monitor: Option<bool>, opened_in_editor: Option<bool>) {
+        todo!()
+    }
 }
-impl<'a> BGRenderTrack for Track<'a, Mutable> {}
+impl BGRenderTrack for Track {}
 
 pub(crate) fn rebuild_instrument_list(
 ) -> anyhow::Result<(Vec<RenderedInstrument>, Vec<(u128, TrackRole, CachedTrack)>)> {
     let rpr = Reaper::get_mut();
-    let mut pr = rpr.current_project();
+    let pr = rpr.current_project();
     let mut buses = HashMap::new();
     let mut rendered = HashMap::new();
     let mut instruments = HashMap::new();
-    pr.iter_tracks_mut(|track| {
+    for track in pr.iter_tracks() {
         if let Some((uid, role)) = track.belongs_to_bgr() {
             match role {
-                TrackRole::Bus => buses.insert(uid, CachedTrack::from(track)),
-                TrackRole::Instrument => instruments.insert(uid, CachedTrack::from(track)),
-                TrackRole::Rendered => rendered.insert(uid, CachedTrack::from(track)),
+                TrackRole::Bus => buses.insert(uid, CachedTrack::from_reaper_track(track)?),
+                TrackRole::Instrument => {
+                    instruments.insert(uid, CachedTrack::from_reaper_track(track)?)
+                }
+                TrackRole::Rendered => rendered.insert(uid, CachedTrack::from_reaper_track(track)?),
             };
         }
-
-        Ok(())
-    })?;
+    }
 
     let mut collected_instruments = Vec::new();
     let mut unmatched_buses = HashMap::new();
@@ -123,8 +128,8 @@ pub(crate) fn resolve_unpaired_tracks(
                 }
                 _ => {
                     for (uuid, role, track) in unpaired_tracks.iter_mut(){
-                        let name = track.with_reaper_track_mut(|track|{
-                            let name = track.name().clone();
+                        let name = track.with_reaper_track(|track|{
+                            let name = track.name()?.clone();
                             match role{
                                 TrackRole::Instrument => Ok(name),
                                 TrackRole::Bus => Ok(name.strip_suffix(" bus").unwrap_or(&name).to_string()),
@@ -156,12 +161,17 @@ fn move_track_before(track: &mut CachedTrack, before_index: usize) -> anyhow::Re
     let selected_guids = {
         let pr = Reaper::get().current_project();
         pr.iter_selected_tracks()
-            .map(|track| track.guid().to_string())
+            .map(|track| {
+                track
+                    .guid()
+                    .expect("pointer error on valid objects")
+                    .to_string()
+            })
             .collect::<HashSet<_>>()
     };
 
     track.validate()?;
-    track.with_reaper_track_mut(|track| {
+    track.with_reaper_track(|track| {
         track.make_only_selected_track();
         Ok(())
     })?;
@@ -173,17 +183,14 @@ fn move_track_before(track: &mut CachedTrack, before_index: usize) -> anyhow::Re
     }
 
     if !selected_guids.is_empty() {
-        let mut pr = Reaper::get_mut().current_project();
-        pr.iter_tracks_mut(|mut track| {
-            track.set_selected(false)?;
-            Ok(())
-        })?;
-        pr.iter_tracks_mut(|mut track| {
-            if selected_guids.contains(&track.guid().to_string()) {
+        let pr = Reaper::get_mut().current_project();
+        for mut track in pr.iter_tracks() {
+            if selected_guids.contains(&track.guid()?.to_string()) {
                 track.set_selected(true)?;
+            } else {
+                track.set_selected(false)?;
             }
-            Ok(())
-        })?;
+        }
     }
 
     track.validate()?;
@@ -223,24 +230,22 @@ pub(crate) fn align_all_instrument_track_orders(
 
 fn align_instrument_track_order_by_uuid(uuid: u128) -> anyhow::Result<()> {
     let rpr = Reaper::get_mut();
-    let mut pr = rpr.current_project();
+    let pr = rpr.current_project();
     let mut instrument = None;
     let mut bus = None;
     let mut rendered = None;
-    pr.iter_tracks_mut(|track| {
+    for track in pr.iter_tracks() {
         if let Some((track_uuid, track_role)) = track.belongs_to_bgr() {
             if track_uuid != uuid {
                 return Ok(());
             }
             match track_role {
-                TrackRole::Bus => bus = Some(CachedTrack::from(track)),
-                TrackRole::Instrument => instrument = Some(CachedTrack::from(track)),
-                TrackRole::Rendered => rendered = Some(CachedTrack::from(track)),
+                TrackRole::Bus => bus = Some(CachedTrack::from_reaper_track(track)?),
+                TrackRole::Instrument => instrument = Some(CachedTrack::from_reaper_track(track)?),
+                TrackRole::Rendered => rendered = Some(CachedTrack::from_reaper_track(track)?),
             }
         }
-        Ok(())
-    })?;
-
+    }
     if let (Some(instrument), Some(rendered), Some(bus)) = (instrument, rendered, bus) {
         let mut set = RenderedInstrument {
             uuid,
@@ -268,9 +273,9 @@ pub fn create_bg_instrument(_: &mut ActionHook) -> Result<(), Box<dyn Error>> {
         let uid = Uuid::new_v4();
         let mut pr = rpr.current_project();
         pr.begin_undo_block();
-        let index = match pr.get_selected_track(0) {
-            Some(track) => track.index() + 1,
-            None => pr.n_tracks(),
+        let index = match pr.get_selected_track(0)? {
+            Some(track) => track.index()? + 1,
+            None => pr.n_tracks()?,
         };
         let instrument = create_instrument_track(uid.as_u128(), index, instrument_name, None)?;
         let bus = create_bus_track(uid.as_u128(), instrument.clone(), None)?;
@@ -284,33 +289,33 @@ pub fn make_track_rendered(_: &mut ActionHook) -> Result<(), Box<dyn Error>> {
     let rpr = Reaper::get_mut();
     let mut pr = rpr.current_project();
     pr.begin_undo_block();
-    let mut track = match pr.get_selected_track_mut(0) {
+    let mut track = match pr.get_selected_track(0)? {
         Some(track) => track,
         None => {
             log::error!("no selected track for adding to background render");
             return Ok(());
         }
     };
-    let sends = cache_and_remove_track_sends(&mut track);
+    let sends = cache_and_remove_track_sends(&mut track)?;
 
     let uid = Uuid::new_v4().as_u128();
-    create_bgr_ext_state(uid, &track, TrackRole::Instrument);
+    create_bgr_ext_state(uid, &track, TrackRole::Instrument)?;
     let cached_instr = CachedTrack {
-        index: track.index(),
-        guid: track.guid().to_string(),
+        index: track.index()?,
+        guid: track.guid()?.to_string(),
     };
     let mut bus = create_bus_track(uid, cached_instr.clone(), None)?;
     let _rendered = create_rendered_track(uid, cached_instr, Some(bus.clone()))?;
     debug!("transfering fx from instrument to bus");
-    bus.with_reaper_track_mut(|mut bus_track| {
+    bus.with_reaper_track(|mut bus_track| {
         let mut idx = 0;
-        while let Some(fx) = track.get_fx_mut(idx) {
-            if fx.is_instrument() {
+        while let Some(fx) = track.get_fx(idx)? {
+            if fx.is_instrument()? {
                 idx += 1;
                 continue;
             }
-            let bus_idx = bus_track.n_fx();
-            fx.move_to_track(&mut bus_track, bus_idx);
+            let bus_idx = bus_track.n_fx()?;
+            fx.move_to_track(&mut bus_track, bus_idx)?;
         }
         debug!("applying sends to bus");
         for send in sends {
@@ -334,10 +339,10 @@ fn create_instrument_track(
         instrument_name, uid
     );
     let mut pr = Reaper::get().current_project();
-    let mut instr = pr.add_track(index, instrument_name.clone());
+    let mut instr = pr.add_track(index, instrument_name.clone())?;
     instr.set_parent_send(None)?;
-    create_bgr_ext_state(uid, &instr, TrackRole::Instrument);
-    let mut instrument_track = CachedTrack::from(instr);
+    create_bgr_ext_state(uid, &instr, TrackRole::Instrument)?;
+    let mut instrument_track = CachedTrack::from_reaper_track(instr)?;
     if let Some(mut bus) = bus {
         create_send(&mut instrument_track, &mut bus)?;
     }
@@ -353,16 +358,16 @@ fn create_rendered_track(
         "creating rendered track for BackgroundRenderer instrument {:#?}\nwith uuid {}",
         instrument, uid
     );
-    let mut rendered_track = instrument.with_reaper_track_mut(|track| {
-        let index = track.index();
-        let instrument_name = track.name();
+    let mut rendered_track = instrument.with_reaper_track(|track| {
+        let index = track.index()?;
+        let instrument_name = track.name()?;
         let mut pr = Reaper::get().current_project();
-        let mut rndr = pr.add_track(index, instrument_name.clone() + " rendered");
+        let mut rndr = pr.add_track(index, instrument_name.clone() + " rendered")?;
         rndr.set_visible_in_tcp(false)?;
         rndr.set_visible_in_mcp(false)?;
         rndr.set_parent_send(None)?;
         create_bgr_ext_state(uid, &rndr, TrackRole::Rendered);
-        Ok(CachedTrack::from(rndr))
+        Ok(CachedTrack::from_reaper_track(rndr)?)
     })?;
     if let Some(mut bus) = bus {
         create_send(&mut rendered_track, &mut bus)?;
@@ -379,14 +384,14 @@ fn create_bus_track(
         "creating bus track for BackgroundRenderer instrument {:#?}\nwith uuid {}",
         instrument, uid
     );
-    let mut bus_track = instrument.with_reaper_track_mut(|track| {
-        let index = track.index();
-        let instrument_name = track.name();
+    let mut bus_track = instrument.with_reaper_track(|track| {
+        let index = track.index()?;
+        let instrument_name = track.name()?;
         let mut pr = Reaper::get().current_project();
-        let mut bus = pr.add_track(index, instrument_name.clone() + " bus");
+        let mut bus = pr.add_track(index, instrument_name.clone() + " bus")?;
         bus.set_visible_in_tcp(false)?;
-        create_bgr_ext_state(uid, &bus, TrackRole::Bus);
-        Ok(CachedTrack::from(bus))
+        create_bgr_ext_state(uid, &bus, TrackRole::Bus)?;
+        Ok(CachedTrack::from_reaper_track(bus)?)
     })?;
     create_send(&mut instrument, &mut bus_track)?;
     if let Some(mut rendered) = rendered {
@@ -395,69 +400,68 @@ fn create_bus_track(
     Ok(bus_track)
 }
 
-fn create_bgr_ext_state(uid: u128, track: &Track<'_, Mutable>, role: TrackRole) {
+fn create_bgr_ext_state(uid: u128, track: &Track, role: TrackRole) -> ReaperResult<()> {
     debug!(
         "creating BackgroundRenderer ExtState for track {}, with role {:?} and uuid {}",
-        track.name(),
+        track.name().unwrap_or(String::default()),
         role,
         uid
     );
-    ExtState::new(EXT_SECTION, UUID_KEY, uid, true, track, None);
-    ExtState::new(EXT_SECTION, ROLE_KEY, role, true, track, None);
+    ExtState::new(EXT_SECTION, UUID_KEY, uid, true, track, None)?;
+    ExtState::new(EXT_SECTION, ROLE_KEY, role, true, track, None)?;
+    Ok(())
 }
 
 fn delete_track(track: &mut CachedTrack) -> anyhow::Result<()> {
-    track.with_reaper_track_mut(|track| {
-        debug!("deleting track {}", track.name());
-        track.delete();
+    track.with_reaper_track(|track| {
+        debug!("deleting track {}", track.name()?);
+        track.delete()?;
         Ok(())
     })
 }
 
 fn forget_track(track: &mut CachedTrack) -> anyhow::Result<()> {
-    let section = CString::new(EXT_SECTION).unwrap();
-    let uuid_key = CString::new(UUID_KEY).unwrap();
-    let role_key = CString::new(ROLE_KEY).unwrap();
-    track.with_reaper_track_mut(|track| {
-        track.delete_ext_value(&section, &uuid_key);
-        track.delete_ext_value(&section, &role_key);
+    let section = CString::new(EXT_SECTION)?;
+    let uuid_key = CString::new(UUID_KEY)?;
+    let role_key = CString::new(ROLE_KEY)?;
+    track.with_reaper_track(|track| {
+        track.delete_ext_value(&section, &uuid_key)?;
+        track.delete_ext_value(&section, &role_key)?;
         Ok(())
     })
 }
 
 fn restore_instrument_structure(uuid: u128) -> anyhow::Result<()> {
     let rpr = Reaper::get_mut();
-    let mut pr = rpr.current_project();
+    let pr = rpr.current_project();
     let mut instrument = None;
     let mut bus = None;
     let mut rendered = None;
-    pr.iter_tracks_mut(|track| {
+    for track in pr.iter_tracks() {
         if let Some(track_uuid) =
-            ExtState::<u128, Track<Mutable>>::new(EXT_SECTION, UUID_KEY, None, true, &track, None)
-                .get()?
+            ExtState::<u128, Track>::new(EXT_SECTION, UUID_KEY, None, true, &track, None)?.get()?
         {
             if track_uuid != uuid {
                 return Ok(());
             }
-            match ExtState::<TrackRole, Track<Mutable>>::new(
+            match ExtState::<TrackRole, Track>::new(
                 EXT_SECTION,
                 ROLE_KEY,
                 None,
                 true,
                 &track,
                 None,
-            )
+            )?
             .get()?
             .ok_or(LevitanusError::Unexpected(
                 "no ExtState for role on the backgroundrendered track".to_string(),
             ))? {
-                TrackRole::Bus => bus = Some(CachedTrack::from(track)),
-                TrackRole::Instrument => instrument = Some(CachedTrack::from(track)),
-                TrackRole::Rendered => rendered = Some(CachedTrack::from(track)),
+                TrackRole::Bus => bus = Some(CachedTrack::from_reaper_track(track)?),
+                TrackRole::Instrument => instrument = Some(CachedTrack::from_reaper_track(track)?),
+                TrackRole::Rendered => rendered = Some(CachedTrack::from_reaper_track(track)?),
             }
         }
-        Ok(())
-    })?;
+    }
 
     if let Some(instrument) = instrument {
         if bus.is_none() {
@@ -474,8 +478,8 @@ fn restore_instrument_structure(uuid: u128) -> anyhow::Result<()> {
     }
     if let Some(mut bus) = bus {
         if instrument.is_none() {
-            let instrument_name = bus.with_reaper_track_mut(|track| {
-                let name = track.name().clone();
+            let instrument_name = bus.with_reaper_track(|track| {
+                let name = track.name()?.clone();
                 let name = name.strip_suffix(" bus").unwrap_or(&name).to_string();
                 Ok(name)
             })?;
@@ -497,8 +501,8 @@ fn restore_instrument_structure(uuid: u128) -> anyhow::Result<()> {
     }
     if let Some(mut rendered) = rendered {
         if instrument.is_none() {
-            let instrument_name = rendered.with_reaper_track_mut(|track| {
-                let name = track.name().clone();
+            let instrument_name = rendered.with_reaper_track(|track| {
+                let name = track.name()?.clone();
                 let name = name.strip_suffix(" rendered").unwrap_or(&name).to_string();
                 Ok(name)
             })?;

@@ -1,12 +1,12 @@
 use std::{cell::RefCell, collections::HashSet, error::Error, sync::Arc, time::Duration};
 
-use rea_rs::{ActionHook, ControlSurface, ExtState, Reaper, Timer};
+use rea_rs::{ActionHook, ControlSurface, ExtState, Reaper, ReaperResult, Timer};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     background_render::track_management::{
         align_all_instrument_track_orders, rebuild_instrument_list, resolve_unpaired_tracks,
-        TrackRole,
+        BGRenderTrack, TrackRole,
     },
     utils::CachedTrack,
 };
@@ -97,7 +97,7 @@ impl Timer for MainLoop {
     fn run(&mut self) -> Result<(), Box<dyn Error>> {
         let rpr = Reaper::get_mut();
         let pr = rpr.current_project();
-        if !pr.is_stopped() {
+        if !pr.is_stopped()? {
             return Ok(());
         }
         let mut state = BackgroundRendererState::load()?;
@@ -152,6 +152,20 @@ impl ControlSurface for BGRControlSurface {
         }
         Ok(())
     }
+    fn run(&mut self) -> anyhow::Result<()> {
+        // Reaper::get().midi
+        Ok(())
+    }
+    fn set_surface_recarm(&self, track: &mut rea_rs::Track, recarm: bool) -> anyhow::Result<()> {
+        if let Some((_, role)) = track.belongs_to_bgr() {
+            if role != TrackRole::Instrument {
+                return Ok(());
+            }
+            let rec_monitor = recarm && track.rec_monitoring()?.mode > 0;
+            track.monitor(Some(rec_monitor), None);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -162,22 +176,22 @@ struct RenderedInstrument {
     instrument: CachedTrack,
 }
 
-pub fn load_default_state() -> bool {
+pub fn load_default_state() -> ReaperResult<bool> {
     let rpr = Reaper::get();
     let ext_state: ExtState<bool, Reaper> =
-        ExtState::new(EXT_SECTION, EXT_KEY, None, true, rpr, None);
+        ExtState::new(EXT_SECTION, EXT_KEY, None, true, rpr, None)?;
 
     match ext_state.get() {
-        Ok(Some(value)) => value,
-        Ok(None) => false,
-        Err(_) => false,
+        Ok(Some(value)) => Ok(value),
+        Ok(None) => Ok(false),
+        Err(_) => Ok(false),
     }
 }
 
-pub fn save_default_state(enabled: bool) {
+pub fn save_default_state(enabled: bool) -> ReaperResult<()> {
     let rpr = Reaper::get();
-    let mut ext_state = ExtState::new(EXT_SECTION, EXT_KEY, Some(enabled), true, rpr, None);
-    ext_state.set(enabled);
+    let mut ext_state = ExtState::new(EXT_SECTION, EXT_KEY, Some(enabled), true, rpr, None)?;
+    ext_state.set(enabled)
 }
 
 pub fn is_running() -> bool {
@@ -206,7 +220,7 @@ pub fn set_enabled(enabled: bool) -> Result<(), Box<dyn Error>> {
 }
 
 pub fn restore_default_state() -> Result<bool, Box<dyn Error>> {
-    let enabled = load_default_state();
+    let enabled = load_default_state()?;
     set_enabled(enabled)?;
     Ok(enabled)
 }

@@ -6,15 +6,10 @@ members = [
 ]
 
 [workspace.dependencies]
-rea-rs = {git = "https://github.com/Levitanus/rea-rs", branch = "gui"}
-rea-rs-low = {git = "https://github.com/Levitanus/rea-rs", branch = "gui"}
-rea-rs-macros = {git = "https://github.com/Levitanus/rea-rs", branch = "gui"}
-rea-rs-test = {git = "https://github.com/Levitanus/rea-rs", branch = "gui"}
-
-# rea-rs = {path = "../rea-rs/rea-rs"}
-# rea-rs-low = {path = "../rea-rs/low"}
-# rea-rs-macros = {path = "../rea-rs/macros"}
-# rea-rs-test = {path = "../rea-rs/rea-rs-test"}
+rea-rs = { git = "https://github.com/Levitanus/rea-rs", branch = "gui" }
+rea-rs-low = { git = "https://github.com/Levitanus/rea-rs", branch = "gui" }
+rea-rs-macros = { git = "https://github.com/Levitanus/rea-rs", branch = "gui" }
+rea-rs-test = { git = "https://github.com/Levitanus/rea-rs", branch = "gui" }
 
 derivative = "2.2"
 env_logger = "0.10"
@@ -34,3 +29,9 @@ tempfile = "3.0"
 
 thiserror = "1.0"
 anyhow = "1.0.8"
+
+[patch."https://github.com/Levitanus/rea-rs"]
+rea-rs = { path = "/home/levitanus/gits/rea-rs/rea-rs" }
+rea-rs-low = { path = "/home/levitanus/gits/rea-rs/low" }
+rea-rs-macros = { path = "/home/levitanus/gits/rea-rs/macros" }
+rea-rs-test = { path = "/home/levitanus/gits/rea-rs/rea-rs-test" }

@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use log::debug;
 use rea_rs::{
     project_info::{BoundsMode, RenderMode},
-    Duration, Position, Project, SoloMode, SourceOffset,
+    Duration, Position, Project, ReaperResult, SoloMode, SourceOffset,
 };
 
 pub(super) const DEFAULT_RENDER_TARGETS_BUF_SIZE: usize = 1024;
@@ -104,30 +104,30 @@ fn build_render_target_from_plan(
     let duration = rea_rs::Duration::from_std((bound_end - bound_start).as_duration())
         .unwrap_or_else(|_| rea_rs::Duration::zero());
 
-    for track_idx in tracks_for_scope(pr, &plan.scope) {
+    for track_idx in tracks_for_scope(pr, &plan.scope)? {
         let track = pr
-            .get_track(track_idx)
+            .get_track(track_idx)?
             .ok_or_else(|| anyhow!("can not get track with index {track_idx}"))?;
 
-        for item_idx in 0..track.n_items() {
+        for item_idx in 0..track.n_items()? {
             let item = track
-                .get_item(item_idx)
+                .get_item(item_idx)?
                 .ok_or_else(|| anyhow!("can not get item {item_idx} on track {track_idx}"))?;
 
-            if item.is_muted() {
+            if item.is_muted()? {
                 continue;
             }
 
-            let take = item.active_take();
-            let Some(source) = take.source() else {
+            let take = item.active_take()?;
+            let Some(source) = take.source()? else {
                 continue;
             };
-            if source.type_string() != "VIDEO" {
+            if source.type_string()? != "VIDEO" {
                 continue;
             }
 
-            let item_start = item.position().with_precision(TIMELINE_PRECISION);
-            let item_end = item.end_position().with_precision(TIMELINE_PRECISION);
+            let item_start = item.position()?.with_precision(TIMELINE_PRECISION);
+            let item_end = item.end_position()?.with_precision(TIMELINE_PRECISION);
 
             if item_start >= bound_end || item_end <= bound_start {
                 continue;
@@ -149,19 +149,20 @@ fn build_render_target_from_plan(
 				);
                 return Ok(RenderTarget {
                     path: plan.render_target.clone(),
-                    video_source: Some(source.filename()),
-                    stretch_ratio: take.play_rate().into(),
+                    video_source: Some(source.filename()?),
+                    stretch_ratio: take.play_rate()?.into(),
                     availble_for_render: AvailbleForRender::OutOfBounds(out_of_bounds),
                     duration,
-                    source_offset: take.start_offset(),
+                    source_offset: take.start_offset()?,
                 });
             }
 
-            let source_offset = take.start_offset() + (bound_start - item.position()).as_duration();
+            let source_offset =
+                take.start_offset()? + (bound_start - item.position()?).as_duration();
             return Ok(RenderTarget {
                 path: plan.render_target.clone(),
-                video_source: Some(source.filename()),
-                stretch_ratio: take.play_rate().into(),
+                video_source: Some(source.filename()?),
+                stretch_ratio: take.play_rate()?.into(),
                 availble_for_render: AvailbleForRender::Ok,
                 duration,
                 source_offset,
@@ -198,8 +199,8 @@ fn build_render_target_plan(
         .map(PathBuf::from)
         .collect::<Vec<_>>();
 
-    let master_tracks = collect_active_track_indices(pr);
-    let stem_tracks = collect_stem_tracks(pr);
+    let master_tracks = collect_active_track_indices(pr)?;
+    let stem_tracks = collect_stem_tracks(pr)?;
 
     if matches!(settings.mode, RenderMode::RenderMatrix) {
         let plans = build_render_matrix_plan(&bounds, &targets)?;
@@ -340,7 +341,7 @@ fn collect_render_bounds(pr: &Project) -> anyhow::Result<Vec<RenderBound>> {
     match pr.get_render_bounds_mode() {
         BoundsMode::EntireProject => Ok(vec![RenderBound {
             start: Position::from(0.0),
-            end: pr.length().into(),
+            end: pr.length()?.into(),
             rendered_tracks: Vec::new(),
         }]),
         BoundsMode::Custom => {
@@ -364,8 +365,8 @@ fn collect_render_bounds(pr: &Project) -> anyhow::Result<Vec<RenderBound>> {
             let mut bounds = pr
                 .iter_selected_items()
                 .map(|item| RenderBound {
-                    start: item.position(),
-                    end: item.end_position(),
+                    start: item.position().expect("not valid item"),
+                    end: item.end_position().expect("not valid item"),
                     rendered_tracks: Vec::new(),
                 })
                 .collect::<Vec<_>>();
@@ -390,51 +391,63 @@ fn collect_region_bounds(pr: &Project, selected_only: bool) -> Vec<RenderBound> 
             end: region.rgn_end,
             rendered_tracks: region
                 .iter_rendered_tracks(pr)
-                .map(|tr| (tr.index(), tr.name()))
+                .map(|tr| {
+                    (
+                        tr.index().expect("no valid pointer on valid object"),
+                        tr.name().expect("not valid track"),
+                    )
+                })
                 .collect(),
         })
         .collect()
 }
 
-fn collect_active_track_indices(pr: &Project) -> Vec<usize> {
-    let any_solo = pr.any_track_solo();
-    pr.iter_tracks()
-        .filter(|tr| !tr.muted())
-        .filter(|tr| !any_solo || tr.solo() != SoloMode::NotSoloed)
-        .map(|tr| tr.index())
-        .collect()
+fn collect_active_track_indices(pr: &Project) -> ReaperResult<Vec<usize>> {
+    let any_solo = pr.any_track_solo()?;
+    Ok(pr
+        .iter_tracks()
+        .filter(|tr| !tr.muted().expect("not valid track"))
+        .filter(|tr| !any_solo || tr.solo().expect("not valid track") != SoloMode::NotSoloed)
+        .map(|tr| tr.index().expect("not valid track"))
+        .collect())
 }
 
-fn collect_stem_tracks(pr: &Project) -> Vec<(usize, String)> {
+fn collect_stem_tracks(pr: &Project) -> ReaperResult<Vec<(usize, String)>> {
     let selected = pr
         .iter_selected_tracks()
-        .map(|tr| tr.index())
+        .map(|tr| tr.index().expect("not valid track"))
         .collect::<HashSet<_>>();
     if selected.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
-    let any_solo = pr.any_track_solo();
-    pr.iter_tracks()
-        .filter(|tr| selected.contains(&tr.index()))
-        .filter(|tr| !tr.muted())
-        .filter(|tr| !any_solo || tr.solo() != SoloMode::NotSoloed)
-        .map(|tr| (tr.index(), tr.name()))
-        .collect()
+    let any_solo = pr.any_track_solo()?;
+    Ok(pr
+        .iter_tracks()
+        .filter(|tr| selected.contains(&tr.index().expect("not valid track")))
+        .filter(|tr| !tr.muted().expect("not valid track"))
+        .filter(|tr| !any_solo || tr.solo().expect("not valid track") != SoloMode::NotSoloed)
+        .map(|tr| {
+            (
+                tr.index().expect("not valid track"),
+                tr.name().expect("not valid track"),
+            )
+        })
+        .collect())
 }
 
-fn tracks_for_scope(pr: &Project, scope: &TargetTrackScope) -> Vec<usize> {
+fn tracks_for_scope(pr: &Project, scope: &TargetTrackScope) -> ReaperResult<Vec<usize>> {
     match scope {
         TargetTrackScope::MasterMix => collect_active_track_indices(pr),
         TargetTrackScope::Stem(track_idx) => {
-            let any_solo = pr.any_track_solo();
-            let Some(track) = pr.get_track(*track_idx) else {
-                return Vec::new();
+            let any_solo = pr.any_track_solo()?;
+            let Some(track) = pr.get_track(*track_idx)? else {
+                return Ok(Vec::new());
             };
-            if track.muted() || (any_solo && track.solo() == SoloMode::NotSoloed) {
-                Vec::new()
+            if track.muted()? || (any_solo && track.solo()? == SoloMode::NotSoloed) {
+                Ok(Vec::new())
             } else {
-                vec![*track_idx]
+                Ok(vec![*track_idx])
             }
         }
     }

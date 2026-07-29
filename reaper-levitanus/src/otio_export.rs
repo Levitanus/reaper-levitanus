@@ -9,8 +9,8 @@ use anyhow::anyhow;
 use log::{info, warn};
 use rea_rs::{
     project_info::{BoundsMode, RenderMode},
-    CommandId, ExtState, MessageBoxType, MessageBoxValue, Position, Project, Reaper, SoloMode,
-    Take,
+    CommandId, ExtState, MessageBoxType, MessageBoxValue, Position, Project, Reaper, ReaperResult,
+    SoloMode, Take,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -284,7 +284,7 @@ struct OtioTimeline {
 pub fn export_otio_project() -> Result<(), Box<dyn Error>> {
     let rpr = Reaper::get();
     let pr = rpr.current_project();
-    let fps_policy = get_project_fps_policy(&pr);
+    let fps_policy = get_project_fps_policy(&pr)?;
     let plans = build_render_target_plan(&pr)?;
     let audio_exists = ensure_render_audio_exists(&pr, &plans)?;
 
@@ -327,7 +327,7 @@ pub fn export_otio_project() -> Result<(), Box<dyn Error>> {
 
         let timeline_name = format!(
             "{} [{}]",
-            pr.name(),
+            pr.name()?,
             plan.render_target
                 .file_name()
                 .and_then(|f| f.to_str())
@@ -413,12 +413,12 @@ pub fn set_project_fps(policy: OtioFpsPolicy) -> Result<(), Box<dyn Error>> {
         true,
         &pr,
         None,
-    );
-    state.set(policy);
+    )?;
+    state.set(policy)?;
     Ok(())
 }
 
-fn get_project_fps_policy(pr: &Project) -> OtioFpsPolicy {
+fn get_project_fps_policy(pr: &Project) -> ReaperResult<OtioFpsPolicy> {
     let state: ExtState<OtioFpsPolicy, Project> = ExtState::new(
         OTIO_EXT_SECTION,
         OTIO_FPS_POLICY_KEY,
@@ -426,8 +426,8 @@ fn get_project_fps_policy(pr: &Project) -> OtioFpsPolicy {
         true,
         pr,
         None,
-    );
-    state.get().ok().flatten().unwrap_or_default()
+    )?;
+    Ok(state.get().ok().flatten().unwrap_or_default())
 }
 
 fn build_render_target_plan(pr: &Project) -> anyhow::Result<Vec<RenderTargetPlan>> {
@@ -441,8 +441,8 @@ fn build_render_target_plan(pr: &Project) -> anyhow::Result<Vec<RenderTargetPlan
         .map(PathBuf::from)
         .collect::<Vec<_>>();
 
-    let master_tracks = collect_active_track_indices(pr);
-    let stem_tracks = collect_stem_tracks(pr);
+    let master_tracks = collect_active_track_indices(pr)?;
+    let stem_tracks = collect_stem_tracks(pr)?;
 
     let scopes = match settings.mode {
         RenderMode::MasterMix => vec![TargetTrackScope::MasterMix],
@@ -552,7 +552,7 @@ fn collect_render_bounds(pr: &Project) -> anyhow::Result<Vec<RenderBound>> {
     match mode {
         BoundsMode::EntireProject => Ok(vec![RenderBound {
             start: Position::from(0.0),
-            end: pr.length().into(),
+            end: pr.length()?.into(),
             rendered_tracks: Vec::new(),
         }]),
         BoundsMode::Custom => {
@@ -576,8 +576,8 @@ fn collect_render_bounds(pr: &Project) -> anyhow::Result<Vec<RenderBound>> {
             let mut bounds = pr
                 .iter_selected_items()
                 .map(|item| RenderBound {
-                    start: item.position(),
-                    end: item.end_position(),
+                    start: item.position().expect("not valid item"),
+                    end: item.end_position().expect("not valid item"),
                     rendered_tracks: Vec::new(),
                 })
                 .collect::<Vec<_>>();
@@ -600,7 +600,12 @@ fn collect_region_bounds(pr: &Project, selected_only: bool) -> Vec<RenderBound> 
         .map(|region| {
             let rendered_tracks = region
                 .iter_rendered_tracks(pr)
-                .map(|tr| (tr.index(), tr.name()))
+                .map(|tr| {
+                    (
+                        tr.index().expect("not valid track"),
+                        tr.name().expect("not valid track"),
+                    )
+                })
                 .collect::<Vec<_>>();
             RenderBound {
                 start: region.position,
@@ -611,39 +616,49 @@ fn collect_region_bounds(pr: &Project, selected_only: bool) -> Vec<RenderBound> 
         .collect()
 }
 
-fn collect_active_track_indices(pr: &Project) -> Vec<usize> {
-    let any_solo = pr.any_track_solo();
+fn collect_active_track_indices(pr: &Project) -> ReaperResult<Vec<usize>> {
+    let any_solo = pr.any_track_solo()?;
+
     pr.iter_tracks()
         .rev()
-        .filter(|tr| !tr.muted())
-        .filter(|tr| !any_solo || tr.solo() != SoloMode::NotSoloed)
+        .filter(|tr| {
+            let muted = tr.muted().expect("not valid track");
+            let solo = tr.solo().expect("not valid track");
+            !muted && (!any_solo || solo != SoloMode::NotSoloed)
+        })
         .map(|tr| tr.index())
         .collect()
 }
 
-fn collect_stem_tracks(pr: &Project) -> Vec<(usize, String)> {
+fn collect_stem_tracks(pr: &Project) -> ReaperResult<Vec<(usize, String)>> {
     let selected = pr
         .iter_selected_tracks()
-        .map(|tr| tr.index())
+        .map(|tr| tr.index().expect("not valid track"))
         .collect::<HashSet<_>>();
     if selected.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
-    let any_solo = pr.any_track_solo();
-    pr.iter_tracks()
+    let any_solo = pr.any_track_solo()?;
+    Ok(pr
+        .iter_tracks()
         .rev()
-        .filter(|tr| selected.contains(&tr.index()))
-        .filter(|tr| !tr.muted())
-        .filter(|tr| !any_solo || tr.solo() != SoloMode::NotSoloed)
-        .map(|tr| (tr.index(), tr.name()))
-        .collect()
+        .filter(|tr| selected.contains(&tr.index().expect("not valid track")))
+        .filter(|tr| !tr.muted().expect("not valid track"))
+        .filter(|tr| !any_solo || tr.solo().expect("not valid track") != SoloMode::NotSoloed)
+        .map(|tr| {
+            (
+                tr.index().expect("not valid track"),
+                tr.name().expect("not valid track"),
+            )
+        })
+        .collect())
 }
 
-fn tracks_for_scope(pr: &Project, scope: &TargetTrackScope) -> Vec<usize> {
+fn tracks_for_scope(pr: &Project, scope: &TargetTrackScope) -> ReaperResult<Vec<usize>> {
     match scope {
         TargetTrackScope::MasterMix => collect_active_track_indices(pr),
-        TargetTrackScope::Stem(track_idx) => vec![*track_idx],
+        TargetTrackScope::Stem(track_idx) => Ok(vec![*track_idx]),
     }
 }
 
@@ -684,7 +699,7 @@ fn ensure_render_audio_exists(pr: &Project, plans: &[RenderTargetPlan]) -> anyho
 }
 
 fn collect_video_slices(pr: &Project, plan: &RenderTargetPlan) -> anyhow::Result<Vec<VideoSlice>> {
-    let tracks = tracks_for_scope(pr, &plan.scope);
+    let tracks = tracks_for_scope(pr, &plan.scope)?;
     let bound_start = plan.bound.start.with_precision(TIMELINE_PRECISION);
     let bound_end = plan.bound.end.with_precision(TIMELINE_PRECISION);
 
@@ -692,35 +707,35 @@ fn collect_video_slices(pr: &Project, plan: &RenderTargetPlan) -> anyhow::Result
     let mut fps_cache: HashMap<PathBuf, Option<f64>> = HashMap::new();
     for track_idx in tracks {
         let track = pr
-            .get_track(track_idx)
+            .get_track(track_idx)?
             .ok_or_else(|| anyhow!("can not get track with index {track_idx}"))?;
         let track_name = format!(
             "{:02} {}",
             track_idx + 1,
-            if track.name().is_empty() {
+            if track.name()?.is_empty() {
                 "Track".to_string()
             } else {
-                track.name()
+                track.name()?
             }
         );
 
-        for item_idx in 0..track.n_items() {
+        for item_idx in 0..track.n_items()? {
             let item = track
-                .get_item(item_idx)
+                .get_item(item_idx)?
                 .ok_or_else(|| anyhow!("can not get item {item_idx} on track {track_idx}"))?;
-            if item.is_muted() {
+            if item.is_muted()? {
                 continue;
             }
-            let take = item.active_take();
-            let Some(source) = take.source() else {
+            let take = item.active_take()?;
+            let Some(source) = take.source()? else {
                 continue;
             };
-            if source.type_string() != "VIDEO" {
+            if source.type_string()? != "VIDEO" {
                 continue;
             }
 
-            let item_start = item.position().with_precision(TIMELINE_PRECISION);
-            let item_end = item.end_position().with_precision(TIMELINE_PRECISION);
+            let item_start = item.position()?.with_precision(TIMELINE_PRECISION);
+            let item_end = item.end_position()?.with_precision(TIMELINE_PRECISION);
             if item_start >= bound_end || item_end <= bound_start {
                 continue;
             }
@@ -735,18 +750,18 @@ fn collect_video_slices(pr: &Project, plan: &RenderTargetPlan) -> anyhow::Result
             } else {
                 bound_end
             };
-            let item_len = item.length().as_secs_f64();
+            let item_len = item.length()?.as_secs_f64();
 
-            let local_start = (clipped_start - item.position())
+            let local_start = (clipped_start - item.position()?)
                 .as_duration()
                 .as_secs_f64();
-            let local_end = (clipped_end - item.position()).as_duration().as_secs_f64();
+            let local_end = (clipped_end - item.position()?).as_duration().as_secs_f64();
             if local_end <= local_start {
                 continue;
             }
 
-            let stretch_points = build_stretch_points(&take, item_len);
-            let file = source.filename();
+            let stretch_points = build_stretch_points(&take, item_len)?;
+            let file = source.filename()?;
             let source_fps = match fps_cache.get(&file) {
                 Some(v) => *v,
                 None => {
@@ -760,7 +775,7 @@ fn collect_video_slices(pr: &Project, plan: &RenderTargetPlan) -> anyhow::Result
                 &stretch_points,
                 local_start,
                 local_end,
-                item.position().as_duration().as_secs_f64(),
+                item.position()?.as_duration().as_secs_f64(),
                 bound_start.as_duration().as_secs_f64(),
             ) {
                 if segment.timeline_end <= segment.timeline_start {
@@ -802,15 +817,15 @@ struct Segment {
     source_end: f64,
 }
 
-fn build_stretch_points(take: &Take<rea_rs::Immutable>, item_len: f64) -> Vec<StretchPoint> {
-    let play_rate: f64 = take.play_rate().into();
+fn build_stretch_points(take: &Take, item_len: f64) -> ReaperResult<Vec<StretchPoint>> {
+    let play_rate: f64 = take.play_rate()?.into();
     let mut points = Vec::new();
     points.push(StretchPoint {
         item_pos: 0.0,
-        source_pos: take.start_offset().as_secs_f64(),
+        source_pos: take.start_offset()?.as_secs_f64(),
     });
 
-    let mut markers = get_take_stretch_markers(take)
+    let mut markers = get_take_stretch_markers(take)?
         .into_iter()
         .filter(|(pos, _)| *pos > 0.0 && *pos < item_len)
         .collect::<Vec<_>>();
@@ -824,24 +839,25 @@ fn build_stretch_points(take: &Take<rea_rs::Immutable>, item_len: f64) -> Vec<St
 
     let last = points.last().copied().unwrap_or(StretchPoint {
         item_pos: 0.0,
-        source_pos: take.start_offset().as_secs_f64(),
+        source_pos: take.start_offset()?.as_secs_f64(),
     });
     points.push(StretchPoint {
         item_pos: item_len,
         source_pos: last.source_pos + (item_len - last.item_pos) * play_rate,
     });
-    points
+    Ok(points)
 }
 
-fn get_take_stretch_markers(take: &Take<rea_rs::Immutable>) -> Vec<(f64, f64)> {
-    take.iter_stretch_markers()
+fn get_take_stretch_markers(take: &Take) -> ReaperResult<Vec<(f64, f64)>> {
+    Ok(take
+        .iter_stretch_markers()?
         .map(|marker| {
             (
                 marker.position.as_duration().as_secs_f64(),
                 marker.source_position.as_secs_f64(),
             )
         })
-        .collect()
+        .collect())
 }
 
 fn segment_item_by_stretch(

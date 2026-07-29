@@ -102,21 +102,21 @@ pub fn register_envelope_actions(rpr: &mut Reaper) -> Result<(), Box<dyn Error>>
 
 fn envelope_snap_range(change: EnvelopeChange, re: Regex) -> Result<(), Box<dyn Error>> {
     let rpr = Reaper::get_mut();
-    let mut pr = rpr.current_project();
-    for idx in 0..pr.n_selected_items() {
-        let mut item = pr
-            .get_selected_item_mut(idx)
+    let pr = rpr.current_project();
+    for idx in 0..pr.n_selected_items()? {
+        let item = pr
+            .get_selected_item(idx)?
             .ok_or("Out of bounds of selected items")?;
-        let mut take = item.active_take_mut();
-        for env_idx in 0..take.n_envelopes() {
+        let take = item.active_take()?;
+        for env_idx in 0..take.n_envelopes()? {
             let mut env = take
-                .get_envelope_mut(env_idx)
+                .get_envelope(env_idx)?
                 .ok_or("Out of bound for envelope idx")?;
-            debug!("{}", env.name());
-            if !env.name().contains("Pitch") {
+            debug!("{}", env.name()?);
+            if !env.name()?.contains("Pitch") {
                 continue;
             }
-            let chunk = env.state_chunk();
+            let chunk = env.state_chunk()?;
             let mut new_chunk = Vec::new();
             debug!("{}", chunk);
             for line in chunk.split("\n") {

@@ -16,8 +16,8 @@ use anyhow::anyhow;
 use log::debug;
 use rea_rs::{
     gui::{self, DockableEguiWindow},
-    CommandId, ControlSurface, ExtState, MessageBoxType, MessageBoxValue, Mutable, Project, Reaper,
-    Track,
+    CommandId, ControlSurface, ExtState, MessageBoxType, MessageBoxValue, Project, Reaper,
+    ReaperResult, Track,
 };
 use serde::{Deserialize, Serialize};
 
@@ -178,7 +178,7 @@ impl FfmpegGuiSurface {
         let pending_ops = Arc::new(Mutex::new(VecDeque::new()));
         let gui_elements_state = Arc::new(Mutex::new(GuiElementsState::default()));
         let initial_persisted_state = {
-            let mut state = Self::load_gui_state_from_project();
+            let mut state = Self::load_gui_state_from_project()?;
             let elements = gui_elements_state
                 .lock()
                 .map(|s| s.clone())
@@ -334,7 +334,7 @@ impl FfmpegGuiSurface {
         }
     }
 
-    fn load_gui_state_from_project() -> GuiPersistedState {
+    fn load_gui_state_from_project() -> ReaperResult<GuiPersistedState> {
         let pr = Reaper::get().current_project();
         let ext_state: ExtState<GuiPersistedState, Project> = ExtState::new(
             GUI_STATE_EXT_SECTION,
@@ -343,9 +343,9 @@ impl FfmpegGuiSurface {
             true,
             &pr,
             None,
-        );
+        )?;
 
-        match ext_state.get() {
+        let state = match ext_state.get() {
             Ok(Some(state)) => state,
             Ok(None) => GuiPersistedState {
                 parallel_render: true,
@@ -360,10 +360,11 @@ impl FfmpegGuiSurface {
                     ..GuiPersistedState::default()
                 }
             }
-        }
+        };
+        Ok(state)
     }
 
-    fn save_gui_state_to_project(&self, gui_state: GuiPersistedState) {
+    fn save_gui_state_to_project(&self, gui_state: GuiPersistedState) -> ReaperResult<()> {
         let pr = Reaper::get().current_project();
         let mut ext_state: ExtState<GuiPersistedState, Project> = ExtState::new(
             GUI_STATE_EXT_SECTION,
@@ -372,8 +373,9 @@ impl FfmpegGuiSurface {
             true,
             &pr,
             None,
-        );
-        ext_state.set(gui_state);
+        )?;
+        ext_state.set(gui_state)?;
+        Ok(())
     }
 
     fn process_gui_messages(&mut self) {
@@ -670,7 +672,7 @@ impl ControlSurface for FfmpegGuiSurface {
         "ffmpeg gui control surface".to_string()
     }
 
-    fn on_track_selection(&self, _track: &mut Track<Mutable>) -> anyhow::Result<()> {
+    fn on_track_selection(&self, _track: &mut Track) -> anyhow::Result<()> {
         self.enqueue_surface_operation(SurfaceOperation::RefreshRenderTargets);
         Ok(())
     }
