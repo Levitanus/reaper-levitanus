@@ -28,4 +28,6 @@ pub enum LevitanusError {
     Render(String),
     #[error("TrackValidationError, Can not find track with GUID {0}")]
     TrackValidationError(String),
+    #[error("Invalid object")]
+    InvalidObject,
 }

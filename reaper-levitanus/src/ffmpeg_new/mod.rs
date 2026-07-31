@@ -378,14 +378,14 @@ impl FfmpegGuiSurface {
         Ok(())
     }
 
-    fn process_gui_messages(&mut self) {
+    fn process_gui_messages(&mut self) -> anyhow::Result<()> {
         for msg in self.message_bus.drain_for_surface() {
             match msg {
                 GuiToSurfaceMessage::CloseRequested => {
                     self.stop();
                 }
                 GuiToSurfaceMessage::SaveGuiState(state) => {
-                    self.save_gui_state_to_project(state);
+                    self.save_gui_state_to_project(state)?;
                 }
                 GuiToSurfaceMessage::RequestRenderTargets => {
                     self.enqueue_surface_operation(SurfaceOperation::RefreshRenderTargets);
@@ -404,6 +404,7 @@ impl FfmpegGuiSurface {
                 }
             }
         }
+        Ok(())
     }
 
     fn start_render(&mut self) -> anyhow::Result<()> {
@@ -654,7 +655,7 @@ impl ControlSurface for FfmpegGuiSurface {
             }
         }
 
-        self.process_gui_messages();
+        self.process_gui_messages()?;
         self.process_surface_operations();
         self.sync_render_state_to_gui();
 

@@ -431,7 +431,7 @@ fn get_project_fps_policy(pr: &Project) -> ReaperResult<OtioFpsPolicy> {
 }
 
 fn build_render_target_plan(pr: &Project) -> anyhow::Result<Vec<RenderTargetPlan>> {
-    let settings = pr.get_render_settings();
+    let settings = pr.get_render_settings()?;
     let bounds = collect_render_bounds(pr)?;
     let targets = pr
         .get_render_targets()
@@ -548,7 +548,7 @@ fn build_render_matrix_plan(
 }
 
 fn collect_render_bounds(pr: &Project) -> anyhow::Result<Vec<RenderBound>> {
-    let mode = pr.get_render_bounds_mode();
+    let mode = pr.get_render_bounds_mode()?;
     match mode {
         BoundsMode::EntireProject => Ok(vec![RenderBound {
             start: Position::from(0.0),
@@ -556,7 +556,7 @@ fn collect_render_bounds(pr: &Project) -> anyhow::Result<Vec<RenderBound>> {
             rendered_tracks: Vec::new(),
         }]),
         BoundsMode::Custom => {
-            let (start, end) = pr.get_render_bounds();
+            let (start, end) = pr.get_render_bounds()?;
             Ok(vec![RenderBound {
                 start,
                 end,
@@ -596,7 +596,7 @@ fn collect_render_bounds(pr: &Project) -> anyhow::Result<Vec<RenderBound>> {
 fn collect_region_bounds(pr: &Project, selected_only: bool) -> Vec<RenderBound> {
     pr.iter_markers_and_regions()
         .filter(|r| r.is_region)
-        .filter(|r| !selected_only || r.is_selected(pr))
+        .filter(|r| !selected_only || r.is_selected(pr).expect("Should be valid region"))
         .map(|region| {
             let rendered_tracks = region
                 .iter_rendered_tracks(pr)

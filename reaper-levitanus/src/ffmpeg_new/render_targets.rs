@@ -184,7 +184,7 @@ fn build_render_target_plan(
     pr: &mut Project,
     render_targets_buf_size: usize,
 ) -> anyhow::Result<RenderTargetsPlan> {
-    let settings = pr.get_render_settings();
+    let settings = pr.get_render_settings()?;
     let bounds = collect_render_bounds(pr)?;
     pr.set_string_param_size(render_targets_buf_size);
     let targets = pr
@@ -338,14 +338,14 @@ fn build_render_matrix_plan(
 }
 
 fn collect_render_bounds(pr: &Project) -> anyhow::Result<Vec<RenderBound>> {
-    match pr.get_render_bounds_mode() {
+    match pr.get_render_bounds_mode()? {
         BoundsMode::EntireProject => Ok(vec![RenderBound {
             start: Position::from(0.0),
             end: pr.length()?.into(),
             rendered_tracks: Vec::new(),
         }]),
         BoundsMode::Custom => {
-            let (start, end) = pr.get_render_bounds();
+            let (start, end) = pr.get_render_bounds()?;
             Ok(vec![RenderBound {
                 start,
                 end,
@@ -385,7 +385,7 @@ fn collect_render_bounds(pr: &Project) -> anyhow::Result<Vec<RenderBound>> {
 fn collect_region_bounds(pr: &Project, selected_only: bool) -> Vec<RenderBound> {
     pr.iter_markers_and_regions()
         .filter(|r| r.is_region)
-        .filter(|r| !selected_only || r.is_selected(pr))
+        .filter(|r| !selected_only || r.is_selected(pr).expect("should be valid region"))
         .map(|region| RenderBound {
             start: region.position,
             end: region.rgn_end,

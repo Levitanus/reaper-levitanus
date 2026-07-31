@@ -11,7 +11,7 @@ pub fn normalize_all_takes_on_selected_items(
     pr.begin_undo_block()?;
     let mut max_gain: f64 = f64::INFINITY;
     for item_idx in 0..pr.n_selected_items()? {
-        let mut item = match pr.get_selected_item(item_idx)? {
+        let item = match pr.get_selected_item(item_idx)? {
             Some(item) => item,
             None => return Err("can not get selected item".into()),
         };
@@ -31,7 +31,7 @@ pub fn normalize_all_takes_on_selected_items(
             )?;
             max_gain = max_gain.min(norm_amount.get());
             if !common_gain {
-                take.set_volume(norm_amount);
+                take.set_volume(norm_amount)?;
             }
         }
     }
@@ -50,7 +50,7 @@ pub fn normalize_all_takes_on_selected_items(
             }
         }
     }
-    pr.end_undo_block("Normalize all takes in selected items", UndoFlags::all());
+    pr.end_undo_block("Normalize all takes in selected items", UndoFlags::all())?;
     rpr.update_arrange();
     Ok(())
 }
