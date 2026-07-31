@@ -103,7 +103,7 @@ struct BGRControlSurface {}
 struct MainLoop {}
 
 impl Timer for MainLoop {
-    fn run(&mut self) -> Result<(), Box<dyn Error>> {
+    fn run(&mut self) -> Result<(), anyhow::Error> {
         // debug!("run");
         let rpr = Reaper::get_mut();
         let pr = rpr.current_project();
@@ -328,7 +328,7 @@ pub fn is_running() -> bool {
     Reaper::get().has_control_surface(&id)
 }
 
-pub fn set_enabled(enabled: bool) -> Result<(), Box<dyn Error>> {
+pub fn set_enabled(enabled: bool) -> Result<(), anyhow::Error> {
     let rpr = Reaper::get_mut();
     let id = ID_STRING.to_string();
     let running = rpr.has_control_surface(&id);
@@ -348,13 +348,13 @@ pub fn set_enabled(enabled: bool) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub fn restore_default_state() -> Result<bool, Box<dyn Error>> {
+pub fn restore_default_state() -> Result<bool, anyhow::Error> {
     let enabled = load_default_state()?;
     set_enabled(enabled)?;
     Ok(enabled)
 }
 
-pub fn toggle_action(hook: &mut ActionHook) -> Result<(), Box<dyn Error>> {
+pub fn toggle_action(hook: &mut ActionHook) -> Result<(), anyhow::Error> {
     let next_state = !is_running();
     set_enabled(next_state)?;
     hook.set_toggle_state(next_state);

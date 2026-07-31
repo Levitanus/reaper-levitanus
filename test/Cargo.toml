@@ -13,6 +13,7 @@ rea-rs-macros = {workspace = true}
 rea-rs-test = {workspace = true}
 reaper-levitanus = {path = "../reaper-levitanus"}
 
+anyhow = {workspace = true}
 fraction = {workspace = true}
 
 [lib]

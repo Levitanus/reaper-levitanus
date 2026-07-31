@@ -134,7 +134,7 @@ trait SendToCache<'a>: SendIntType + Sized + GenericSend<'a> {
         debug!(
             "caching send {} from track {:?}",
             self.index(),
-            self.parent_track().name()
+            self.parent_track().name()?
         );
         let source_track = match self.source_track()? {
             Some(tr) => Some(CachedTrack {
@@ -150,6 +150,7 @@ trait SendToCache<'a>: SendIntType + Sized + GenericSend<'a> {
             }),
             None => None,
         };
+        debug!("got source and dest tracks, caching others");
         Ok(CachedSend {
             index: self.index(),
             send_type: self.send_type(),

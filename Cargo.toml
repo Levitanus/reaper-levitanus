@@ -1,37 +1,37 @@
 [workspace]
 members = [
-"reaper-levitanus", 
-"test", 
-"plugin"
+  "reaper-levitanus",
+  "test",
+  "plugin",
 ]
 
 [workspace.dependencies]
-rea-rs = { git = "https://github.com/Levitanus/rea-rs", branch = "gui" }
-rea-rs-low = { git = "https://github.com/Levitanus/rea-rs", branch = "gui" }
-rea-rs-macros = { git = "https://github.com/Levitanus/rea-rs", branch = "gui" }
-rea-rs-test = { git = "https://github.com/Levitanus/rea-rs", branch = "gui" }
+rea-rs = {git = "https://github.com/Levitanus/rea-rs", branch = "gui"}
+rea-rs-low = {git = "https://github.com/Levitanus/rea-rs", branch = "gui"}
+rea-rs-macros = {git = "https://github.com/Levitanus/rea-rs", branch = "gui"}
+rea-rs-test = {git = "https://github.com/Levitanus/rea-rs", branch = "gui"}
 
+autopilot = "0.4.0"
 derivative = "2.2"
+dyn-clone = "1.0"
 env_logger = "0.10"
-fraction = {version="0.15", features=["with-serde-support"]}
+fraction = {version = "0.15", features = ["with-serde-support"]}
 itertools = "0.10"
+lazy_static = "1.4"
 log = "0.4"
+path-absolutize = "3.1.1"
+regex = "1.10"
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0", features = ["preserve_order"]}
-regex = "1.10"
-lazy_static = "1.4"
-path-absolutize = "3.1.1"
-dyn-clone = "1.0"
-strum = {version="0.26", features=["derive"]}
-autopilot = "0.4.0"
+strum = {version = "0.26", features = ["derive"]}
 
 tempfile = "3.0"
 
+anyhow = {version = "1.0.8", features = ["backtrace"]}
 thiserror = "1.0"
-anyhow = "1.0.8"
 
 [patch."https://github.com/Levitanus/rea-rs"]
-rea-rs = { path = "/home/levitanus/gits/rea-rs/rea-rs" }
-rea-rs-low = { path = "/home/levitanus/gits/rea-rs/low" }
-rea-rs-macros = { path = "/home/levitanus/gits/rea-rs/macros" }
-rea-rs-test = { path = "/home/levitanus/gits/rea-rs/rea-rs-test" }
+rea-rs = {path = "/home/levitanus/gits/rea-rs/rea-rs"}
+rea-rs-low = {path = "/home/levitanus/gits/rea-rs/low"}
+rea-rs-macros = {path = "/home/levitanus/gits/rea-rs/macros"}
+rea-rs-test = {path = "/home/levitanus/gits/rea-rs/rea-rs-test"}

@@ -15,6 +15,7 @@ env_logger = {workspace = true}
 log = {workspace = true}
 
 serde = {workspace = true}
+anyhow = {workspace = true}
 
 fraction = {workspace = true}
 # thiserror = {workspace = true}

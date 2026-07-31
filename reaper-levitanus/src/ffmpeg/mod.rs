@@ -14,7 +14,7 @@ mod options;
 mod parser;
 mod stream_ids;
 
-// pub fn render_video() -> Result<(), Box<dyn Error>> {
+// pub fn render_video() -> Result<(), anyhow::Error> {
 //     let render_settings = RenderSettings::default();
 //     let timelines = build_render_timelines(&render_settings)?;
 //     let render = Render { render_settings };
@@ -22,7 +22,7 @@ mod stream_ids;
 //     Ok(())
 // }
 
-pub fn ffmpeg_gui() -> Result<(), Box<dyn Error>> {
+pub fn ffmpeg_gui() -> Result<(), anyhow::Error> {
     let rpr = Reaper::get_mut();
     let id_string = BACKEND_ID_STRING.to_string();
     if rpr.has_control_surface(&id_string) {

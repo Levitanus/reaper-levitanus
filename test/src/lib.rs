@@ -4,7 +4,7 @@ use rea_rs_test::*;
 use std::error::Error;
 
 #[reaper_extension_plugin]
-fn test_extension(context: PluginContext) -> Result<(), Box<dyn Error>> {
+fn test_extension(context: PluginContext) -> Result<(), anyhow::Error> {
     let _ = ReaperTest::setup(context, "test_action");
     Ok(())
 }

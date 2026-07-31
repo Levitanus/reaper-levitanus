@@ -281,7 +281,7 @@ struct OtioTimeline {
     tracks: OtioStack,
 }
 
-pub fn export_otio_project() -> Result<(), Box<dyn Error>> {
+pub fn export_otio_project() -> Result<(), anyhow::Error> {
     let rpr = Reaper::get();
     let pr = rpr.current_project();
     let fps_policy = get_project_fps_policy(&pr)?;
@@ -375,7 +375,7 @@ fn confirm_overwrite(path: &Path) -> anyhow::Result<bool> {
     Ok(response == MessageBoxValue::Yes)
 }
 
-pub fn export_youtube_timecodes() -> Result<(), Box<dyn Error>> {
+pub fn export_youtube_timecodes() -> Result<(), anyhow::Error> {
     let pr = Reaper::get().current_project();
     let plans = build_render_target_plan(&pr)?;
     for plan in plans {
@@ -404,7 +404,7 @@ pub fn export_youtube_timecodes() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub fn set_project_fps(policy: OtioFpsPolicy) -> Result<(), Box<dyn Error>> {
+pub fn set_project_fps(policy: OtioFpsPolicy) -> Result<(), anyhow::Error> {
     let pr = Reaper::get().current_project();
     let mut state = ExtState::new(
         OTIO_EXT_SECTION,

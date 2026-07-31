@@ -1,11 +1,11 @@
-use std::error::Error;
-
 use int_enum::IntEnum;
 use log::{debug, info};
 use rea_rs::{ActionKind, Reaper};
 use regex::Regex;
 
-pub fn register_envelope_actions(rpr: &mut Reaper) -> Result<(), Box<dyn Error>> {
+use crate::LevitanusError;
+
+pub fn register_envelope_actions(rpr: &mut Reaper) -> Result<(), anyhow::Error> {
     let snap_re = Regex::new(r"(?<first>DEFSHAPE \d )(?<range>-?\d+) (?<snap>-?\d)")?;
     let snap_def = snap_re.clone();
     let snap_semi = snap_re.clone();
@@ -100,18 +100,22 @@ pub fn register_envelope_actions(rpr: &mut Reaper) -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
-fn envelope_snap_range(change: EnvelopeChange, re: Regex) -> Result<(), Box<dyn Error>> {
+fn envelope_snap_range(change: EnvelopeChange, re: Regex) -> Result<(), anyhow::Error> {
     let rpr = Reaper::get_mut();
     let pr = rpr.current_project();
     for idx in 0..pr.n_selected_items()? {
         let item = pr
             .get_selected_item(idx)?
-            .ok_or("Out of bounds of selected items")?;
+            .ok_or(LevitanusError::Unexpected(
+                "Out of bounds of selected items".into(),
+            ))?;
         let take = item.active_take()?;
         for env_idx in 0..take.n_envelopes()? {
             let mut env = take
                 .get_envelope(env_idx)?
-                .ok_or("Out of bound for envelope idx")?;
+                .ok_or(LevitanusError::Unexpected(
+                    "Out of bound for envelope idx".into(),
+                ))?;
             debug!("{}", env.name()?);
             if !env.name()?.contains("Pitch") {
                 continue;
@@ -125,8 +129,12 @@ fn envelope_snap_range(change: EnvelopeChange, re: Regex) -> Result<(), Box<dyn 
                         EnvelopeChange::Snap(snap) => {
                             new_chunk.push(format!(
                                 "{}{} {}",
-                                cap.name("first").ok_or("no name first")?.as_str(),
-                                cap.name("range").ok_or("no name first")?.as_str(),
+                                cap.name("first")
+                                    .ok_or(LevitanusError::Unexpected("no name first".into()))?
+                                    .as_str(),
+                                cap.name("range")
+                                    .ok_or(LevitanusError::Unexpected("no name first".into()))?
+                                    .as_str(),
                                 snap as i32
                             ));
                             info!("set pitch snap to {:?}", snap);
@@ -134,9 +142,13 @@ fn envelope_snap_range(change: EnvelopeChange, re: Regex) -> Result<(), Box<dyn 
                         EnvelopeChange::Range(range) => {
                             new_chunk.push(format!(
                                 "{}{} {}",
-                                cap.name("first").ok_or("no name first")?.as_str(),
+                                cap.name("first")
+                                    .ok_or(LevitanusError::Unexpected("no name first".into()))?
+                                    .as_str(),
                                 range as i32,
-                                cap.name("snap").ok_or("no name first")?.as_str(),
+                                cap.name("snap")
+                                    .ok_or(LevitanusError::Unexpected("no name first".into()))?
+                                    .as_str(),
                             ));
                             info!("set pitch range to {}", range);
                         }

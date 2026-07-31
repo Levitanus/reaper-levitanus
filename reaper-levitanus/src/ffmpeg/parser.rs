@@ -41,7 +41,7 @@ static PARSER_STEP: f32 = 0.001;
 pub fn parse_all(
     out_dir: PathBuf,
     sender: impl Into<Option<Sender<ParsingProgress>>>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), anyhow::Error> {
     let mut sender: Option<Sender<ParsingProgress>> = sender.into();
     let mut progress = 0.0;
     if let Err(e) = parse_muxers(muxers_path(&out_dir), &mut progress, &mut sender) {
@@ -110,7 +110,7 @@ fn parse_muxers(
     out_file: PathBuf,
     progress: &mut f32,
     sender: &mut Option<Sender<ParsingProgress>>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), anyhow::Error> {
     let string = output_with_args(["-muxers"])?;
     let lines = string.lines();
     let mux_re = Regex::new(r"\s.*E\s+(?<name>\w+)\s+(?<description>\w.*)")?;
@@ -203,7 +203,7 @@ fn parse_encoders(
     out_file: PathBuf,
     progress: &mut f32,
     sender: &mut Option<Sender<ParsingProgress>>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), anyhow::Error> {
     let string = output_with_args(["-encoders"])?;
     let lines = string.lines();
     let enc_re = Regex::new(r"^(?<flags>[\w\.]{6})\s(?<name>\w+)\s+(?<description>\w.*)")?;
@@ -307,7 +307,7 @@ fn parse_filters(
     out_file: PathBuf,
     progress: &mut f32,
     sender: &mut Option<Sender<ParsingProgress>>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), anyhow::Error> {
     let string = output_with_args(["-filters"])?;
     let lines = string.lines();
     let filter_re = Regex::new(
@@ -415,7 +415,7 @@ fn parse_pix_fmts(
     out_file: PathBuf,
     progress: &mut f32,
     sender: &mut Option<Sender<ParsingProgress>>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), anyhow::Error> {
     let string = output_with_args(["-pix_fmts"])?;
     let lines = string.lines();
     let pix_fmt_re = Regex::new(
@@ -482,7 +482,7 @@ fn parse_pix_fmts(
     Ok(())
 }
 
-fn parse_option(line: &str, mut options: &mut Vec<Opt>) -> Result<ParseFlow, Box<dyn Error>> {
+fn parse_option(line: &str, mut options: &mut Vec<Opt>) -> Result<ParseFlow, anyhow::Error> {
     let Some(cap) = OPT_RE.captures(line) else {
         return parse_enum(line, &mut options);
     };
@@ -520,7 +520,7 @@ fn parse_option(line: &str, mut options: &mut Vec<Opt>) -> Result<ParseFlow, Box
     Ok(ParseFlow::Opt)
 }
 
-fn parse_enum(line: &str, options: &mut Vec<Opt>) -> Result<ParseFlow, Box<dyn Error>> {
+fn parse_enum(line: &str, options: &mut Vec<Opt>) -> Result<ParseFlow, anyhow::Error> {
     let Some(cap) = OPT_ENUM_RE_NAME.captures(line) else {
         return Ok(ParseFlow::Opt);
     };
@@ -583,7 +583,7 @@ enum ParseFlow {
 
 fn output_with_args(
     args: impl IntoIterator<Item = impl AsRef<OsStr>>,
-) -> Result<String, Box<dyn Error>> {
+) -> Result<String, anyhow::Error> {
     let mut ffmpeg = Command::new("ffmpeg");
     ffmpeg.arg("-hide_banner");
     ffmpeg.args(args);
@@ -600,7 +600,7 @@ pub enum ParsingProgress {
 }
 
 #[test]
-fn test_parsing() -> Result<(), Box<dyn Error>> {
+fn test_parsing() -> Result<(), anyhow::Error> {
     std::env::set_var("RUST_LOG", "debug");
     env_logger::try_init()?;
     parse_all(PathBuf::from(temp_dir()), None)?;

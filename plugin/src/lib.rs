@@ -9,14 +9,17 @@ use rea_rs::{
 use rea_rs_macros::reaper_extension_plugin;
 use reaper_levitanus::{
     background_render::{
-        create_bg_instrument, is_running, make_track_rendered, restore_default_state, toggle_action as toggle_background_renderer,
-    }, envelope_snap::register_envelope_actions, ffmpeg_new::ffmpeg_gui, normalization::normalize_all_takes_on_selected_items, otio_export::{OtioFpsPolicy, export_otio_project, export_youtube_timecodes, set_project_fps},
+        create_bg_instrument, is_running, make_track_rendered, restore_default_state,
+        toggle_action as toggle_background_renderer,
+    },
+    envelope_snap::register_envelope_actions,
+    ffmpeg_new::ffmpeg_gui,
+    normalization::normalize_all_takes_on_selected_items,
+    otio_export::{export_otio_project, export_youtube_timecodes, set_project_fps, OtioFpsPolicy},
 };
 
-use std::error::Error;
-
 #[reaper_extension_plugin]
-fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
+fn plugin_main(context: PluginContext) -> Result<(), anyhow::Error> {
     env_logger::init();
     log!(Level::Info, "reaper_levitanus extension... ");
     Reaper::init_global(context);
@@ -30,7 +33,7 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         None,
     );
     match res {
-        Err(err) => error_box("can not register normalize takes", err.to_string()),
+        Err(err) => error_box("can not register normalize takes", err),
         Ok(_) => (),
     }
     let res = rpr.register_action(
@@ -41,11 +44,11 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         None,
     );
     match res {
-        Err(err) => error_box("can not register normalize takes", err.to_string()),
+        Err(err) => error_box("can not register normalize takes", err),
         Ok(_) => (),
     }
     match register_envelope_actions(rpr) {
-        Err(err) => error_box("can not register envelope actions", err.to_string()),
+        Err(err) => error_box("can not register envelope actions", err),
         Ok(_) => (),
     }
     let res = rpr.register_action(
@@ -56,12 +59,12 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         None,
     );
     match res {
-        Err(err) => error_box("can not register ffmpeg gui", err.to_string()),
+        Err(err) => error_box("can not register ffmpeg gui", err),
         Ok(_) => (),
     }
 
     if let Err(err) = restore_default_state() {
-        error_box("can not restore background renderer state", err.to_string());
+        error_box("can not restore background renderer state", err);
     }
 
     let res = rpr.register_action(
@@ -72,10 +75,7 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         None,
     );
     match res {
-        Err(err) => error_box(
-            "can not register background renderer toggle",
-            err.to_string(),
-        ),
+        Err(err) => error_box("can not register background renderer toggle", err),
         Ok(_) => (),
     }
 
@@ -87,7 +87,7 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         None,
     );
     match res {
-        Err(err) => error_box("can not register create BackgroundRenderer instrument", err.to_string()),
+        Err(err) => error_box("can not register create BackgroundRenderer instrument", err),
         Ok(_) => (),
     }
 
@@ -99,7 +99,7 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         None,
     );
     match res {
-        Err(err) => error_box("can not register add track to BackgroundRenderer", err.to_string()),
+        Err(err) => error_box("can not register add track to BackgroundRenderer", err),
         Ok(_) => (),
     }
 
@@ -111,7 +111,7 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         None,
     );
     match res {
-        Err(err) => error_box("can not register OTIO export", err.to_string()),
+        Err(err) => error_box("can not register OTIO export", err),
         Ok(_) => (),
     }
 
@@ -123,7 +123,7 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         None,
     );
     match res {
-        Err(err) => error_box("can not register OTIO FPS median", err.to_string()),
+        Err(err) => error_box("can not register OTIO FPS median", err),
         Ok(_) => (),
     }
 
@@ -135,7 +135,7 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         None,
     );
     match res {
-        Err(err) => error_box("can not register OTIO FPS project", err.to_string()),
+        Err(err) => error_box("can not register OTIO FPS project", err),
         Ok(_) => (),
     }
 
@@ -147,7 +147,7 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         None,
     );
     match res {
-        Err(err) => error_box("can not register OTIO FPS first video", err.to_string()),
+        Err(err) => error_box("can not register OTIO FPS first video", err),
         Ok(_) => (),
     }
 
@@ -159,7 +159,7 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
         None,
     );
     match res {
-        Err(err) => error_box("can not register OTIO timecodes export", err.to_string()),
+        Err(err) => error_box("can not register OTIO timecodes export", err),
         Ok(_) => (),
     }
 
@@ -167,12 +167,7 @@ fn plugin_main(context: PluginContext) -> Result<(), Box<dyn Error>> {
 }
 
 /// Show error box with OK button to user
-fn error_box(title: impl Into<String>, msg: impl Into<String>) {
-    Reaper::get()
-        .show_message_box(
-            title,
-            format!("Error occurred:\n{}", msg.into()),
-            rea_rs::MessageBoxType::Ok,
-        )
-        .expect("Error while displaying error");
+fn error_box(_title: impl Into<String>, error: impl Into<anyhow::Error>) {
+    let error = error.into();
+    Reaper::get().show_console_msg(format!("Error occurred:\n{}", error.to_string()));
 }

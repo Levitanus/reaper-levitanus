@@ -1,10 +1,10 @@
-use std::error::Error;
-
 use rea_rs::{Reaper, UndoFlags, Volume};
+
+use crate::LevitanusError;
 
 pub fn normalize_all_takes_on_selected_items(
     common_gain: Option<bool>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<(), anyhow::Error> {
     let common_gain = common_gain.unwrap_or(true);
     let rpr = Reaper::get_mut();
     let mut pr = rpr.current_project();
@@ -13,13 +13,20 @@ pub fn normalize_all_takes_on_selected_items(
     for item_idx in 0..pr.n_selected_items()? {
         let item = match pr.get_selected_item(item_idx)? {
             Some(item) => item,
-            None => return Err("can not get selected item".into()),
+            None => {
+                return Err(LevitanusError::Unexpected("can not get selected item".into()).into())
+            }
         };
         let length = item.length()?;
         for take_idx in 0..item.n_takes()? {
             let mut take = match item.get_take(take_idx)? {
                 Some(take) => take,
-                None => return Err(format!("can not get take with index {take_idx}").into()),
+                None => {
+                    return Err(LevitanusError::Unexpected(
+                        format!("can not get take with index {take_idx}").into(),
+                    )
+                    .into())
+                }
             };
             let start = take.start_offset()?;
             let end = start + length;
@@ -39,12 +46,21 @@ pub fn normalize_all_takes_on_selected_items(
         for item_idx in 0..pr.n_selected_items()? {
             let item = match pr.get_selected_item(item_idx)? {
                 Some(item) => item,
-                None => return Err("can not get selected item".into()),
+                None => {
+                    return Err(
+                        LevitanusError::Unexpected("can not get selected item".into()).into(),
+                    )
+                }
             };
             for take_idx in 0..item.n_takes()? {
                 let mut take = match item.get_take(take_idx)? {
                     Some(take) => take,
-                    None => return Err(format!("can not get take with index {take_idx}").into()),
+                    None => {
+                        return Err(LevitanusError::Unexpected(
+                            format!("can not get take with index {take_idx}").into(),
+                        )
+                        .into())
+                    }
                 };
                 take.set_volume(max_gain.into())?;
             }

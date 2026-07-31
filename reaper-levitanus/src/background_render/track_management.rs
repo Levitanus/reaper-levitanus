@@ -272,7 +272,7 @@ pub(crate) enum TrackRole {
     Bus = 2,
 }
 
-pub fn create_bg_instrument(_: &mut ActionHook) -> Result<(), Box<dyn Error>> {
+pub fn create_bg_instrument(_: &mut ActionHook) -> Result<(), anyhow::Error> {
     let rpr = Reaper::get_mut();
     static KEY: &str = "Instrument";
     debug!("getting user inputs");
@@ -298,7 +298,7 @@ pub fn create_bg_instrument(_: &mut ActionHook) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub fn make_track_rendered(_: &mut ActionHook) -> Result<(), Box<dyn Error>> {
+pub fn make_track_rendered(_: &mut ActionHook) -> Result<(), anyhow::Error> {
     let rpr = Reaper::get_mut();
     let mut pr = rpr.current_project();
     pr.begin_undo_block()?;

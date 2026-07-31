@@ -171,7 +171,7 @@ impl fmt::Debug for FfmpegGuiSurface {
 }
 
 impl FfmpegGuiSurface {
-    fn new() -> Result<Self, Box<dyn Error>> {
+    fn new() -> Result<Self, anyhow::Error> {
         debug!("ffmpeg_new: creating GUI surface");
         let is_window_alive = Arc::new(AtomicBool::new(true));
         let message_bus = Arc::new(MessageBus::default());
@@ -889,7 +889,7 @@ impl Drop for FfmpegWindowState {
     }
 }
 
-pub fn ffmpeg_gui() -> Result<(), Box<dyn Error>> {
+pub fn ffmpeg_gui() -> Result<(), anyhow::Error> {
     let rpr = Reaper::get_mut();
     let id_string = BACKEND_ID_STRING.to_string();
 
