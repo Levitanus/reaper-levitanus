@@ -1,7 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
-    ffi::CString,
 };
 
 use log::debug;
@@ -24,6 +23,7 @@ where
 {
     /// If Track belongs to BGR, returns uuid and role
     fn belongs_to_bgr(&self) -> Option<(u128, TrackRole)> {
+        // debug!("belongs_to_bgr");
         if let Some(uid) = ExtState::load_value(EXT_SECTION, UUID_KEY, self, None).unwrap_or(None) {
             if let Some(role) =
                 ExtState::load_value(EXT_SECTION, ROLE_KEY, self, None).unwrap_or(None)
@@ -34,12 +34,22 @@ where
         None
     }
 
-    /// Arm instrument for recording, bypassing rendered track
-    fn monitor(&mut self, rec_monitor: Option<bool>, opened_in_editor: Option<bool>) {
-        todo!()
+    fn opened_in_editor(&self) -> ReaperResult<bool>;
+    fn instrument_monitoring(&self) -> ReaperResult<bool>;
+}
+impl BGRenderTrack for Track {
+    fn opened_in_editor(&self) -> ReaperResult<bool> {
+        if let Some(editor) = Reaper::get().active_midi_editor() {
+            if editor.get_active_take()?.parent_track()?.index()? == self.index()? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    fn instrument_monitoring(&self) -> ReaperResult<bool> {
+        Ok(self.rec_armed()? && self.rec_monitoring()?.mode > 0)
     }
 }
-impl BGRenderTrack for Track {}
 
 pub(crate) fn rebuild_instrument_list(
 ) -> anyhow::Result<(Vec<RenderedInstrument>, Vec<(u128, TrackRole, CachedTrack)>)> {
@@ -66,12 +76,14 @@ pub(crate) fn rebuild_instrument_list(
         if let (Some(rendered), Some(instrument)) =
             (rendered.remove(&uuid), instruments.remove(&uuid))
         {
-            collected_instruments.push(RenderedInstrument {
-                uuid,
-                bus,
-                rendered,
-                instrument,
-            });
+            let mut r_instrument = RenderedInstrument::new(uuid, bus, rendered, instrument);
+            // let (mut monitor, mut opened) = (false,false);
+            r_instrument.instrument.with_reaper_track(|track| {
+                r_instrument.rec_monitor = track.instrument_monitoring()?;
+                r_instrument.opened_in_editor = track.opened_in_editor()?;
+                Ok(())
+            })?;
+            collected_instruments.push(r_instrument);
         } else {
             unmatched_buses.insert(uuid, bus);
         }
@@ -105,7 +117,7 @@ pub(crate) fn resolve_unpaired_tracks(
     rpr: &mut Reaper,
     mut pr: Project,
 ) -> Result<(), anyhow::Error> {
-    pr.begin_undo_block();
+    pr.begin_undo_block()?;
     debug!("resolving unpaired tracks: {:#?}", unpaired_tracks);
     match rpr.show_message_box(
             "Missing tracks",
@@ -153,7 +165,7 @@ pub(crate) fn resolve_unpaired_tracks(
                 },
             }
     unpaired_tracks.clear();
-    pr.end_undo_block("resolve unpaired BackgroudRenderer track", UndoFlags::all());
+    pr.end_undo_block("resolve unpaired BackgroudRenderer track", UndoFlags::all())?;
     Ok(())
 }
 
@@ -172,7 +184,7 @@ fn move_track_before(track: &mut CachedTrack, before_index: usize) -> anyhow::Re
 
     track.validate()?;
     track.with_reaper_track(|track| {
-        track.make_only_selected_track();
+        track.make_only_selected_track()?;
         Ok(())
     })?;
     let moved = Reaper::get()
@@ -247,12 +259,7 @@ fn align_instrument_track_order_by_uuid(uuid: u128) -> anyhow::Result<()> {
         }
     }
     if let (Some(instrument), Some(rendered), Some(bus)) = (instrument, rendered, bus) {
-        let mut set = RenderedInstrument {
-            uuid,
-            bus,
-            rendered,
-            instrument,
-        };
+        let mut set = RenderedInstrument::new(uuid, bus, rendered, instrument);
         align_instrument_track_order(&mut set)?;
     }
     Ok(())
@@ -268,19 +275,25 @@ pub(crate) enum TrackRole {
 pub fn create_bg_instrument(_: &mut ActionHook) -> Result<(), Box<dyn Error>> {
     let rpr = Reaper::get_mut();
     static KEY: &str = "Instrument";
+    debug!("getting user inputs");
     if let Ok(values) = rpr.get_user_inputs("Enter Instrument name", vec![KEY], 512) {
         let instrument_name = values.get(KEY).unwrap_or(&KEY.to_string()).to_owned();
         let uid = Uuid::new_v4();
+        debug!("getting current project");
         let mut pr = rpr.current_project();
-        pr.begin_undo_block();
+        pr.begin_undo_block()?;
+        debug!("getting selected track");
         let index = match pr.get_selected_track(0)? {
             Some(track) => track.index()? + 1,
             None => pr.n_tracks()?,
         };
+        debug!("creating instruments");
         let instrument = create_instrument_track(uid.as_u128(), index, instrument_name, None)?;
         let bus = create_bus_track(uid.as_u128(), instrument.clone(), None)?;
+        debug!("creating rendered track");
         let _ = create_rendered_track(uid.as_u128(), instrument, Some(bus))?;
-        pr.end_undo_block("Create BackgroundRenderer Instrument", UndoFlags::all());
+        debug!("making undo block");
+        pr.end_undo_block("Create BackgroundRenderer Instrument", UndoFlags::all())?;
     }
     Ok(())
 }
@@ -288,7 +301,7 @@ pub fn create_bg_instrument(_: &mut ActionHook) -> Result<(), Box<dyn Error>> {
 pub fn make_track_rendered(_: &mut ActionHook) -> Result<(), Box<dyn Error>> {
     let rpr = Reaper::get_mut();
     let mut pr = rpr.current_project();
-    pr.begin_undo_block();
+    pr.begin_undo_block()?;
     let mut track = match pr.get_selected_track(0)? {
         Some(track) => track,
         None => {
@@ -306,7 +319,6 @@ pub fn make_track_rendered(_: &mut ActionHook) -> Result<(), Box<dyn Error>> {
     };
     let mut bus = create_bus_track(uid, cached_instr.clone(), None)?;
     let _rendered = create_rendered_track(uid, cached_instr, Some(bus.clone()))?;
-    debug!("transfering fx from instrument to bus");
     bus.with_reaper_track(|mut bus_track| {
         let mut idx = 0;
         while let Some(fx) = track.get_fx(idx)? {
@@ -317,14 +329,13 @@ pub fn make_track_rendered(_: &mut ActionHook) -> Result<(), Box<dyn Error>> {
             let bus_idx = bus_track.n_fx()?;
             fx.move_to_track(&mut bus_track, bus_idx)?;
         }
-        debug!("applying sends to bus");
         for send in sends {
             send.apply_to_track(&mut bus_track)?;
         }
         Ok(())
     })?;
 
-    pr.end_undo_block("add track to BackgroundRenderer", UndoFlags::all());
+    pr.end_undo_block("add track to BackgroundRenderer", UndoFlags::all())?;
     Ok(())
 }
 
@@ -366,7 +377,7 @@ fn create_rendered_track(
         rndr.set_visible_in_tcp(false)?;
         rndr.set_visible_in_mcp(false)?;
         rndr.set_parent_send(None)?;
-        create_bgr_ext_state(uid, &rndr, TrackRole::Rendered);
+        create_bgr_ext_state(uid, &rndr, TrackRole::Rendered)?;
         Ok(CachedTrack::from_reaper_track(rndr)?)
     })?;
     if let Some(mut bus) = bus {
@@ -421,12 +432,9 @@ fn delete_track(track: &mut CachedTrack) -> anyhow::Result<()> {
 }
 
 fn forget_track(track: &mut CachedTrack) -> anyhow::Result<()> {
-    let section = CString::new(EXT_SECTION)?;
-    let uuid_key = CString::new(UUID_KEY)?;
-    let role_key = CString::new(ROLE_KEY)?;
     track.with_reaper_track(|track| {
-        track.delete_ext_value(&section, &uuid_key)?;
-        track.delete_ext_value(&section, &role_key)?;
+        track.delete_ext_value(EXT_SECTION, UUID_KEY)?;
+        track.delete_ext_value(EXT_SECTION, ROLE_KEY)?;
         Ok(())
     })
 }

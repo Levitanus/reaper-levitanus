@@ -1,12 +1,16 @@
 use std::{cell::RefCell, collections::HashSet, error::Error, sync::Arc, time::Duration};
 
-use rea_rs::{ActionHook, ControlSurface, ExtState, Reaper, ReaperResult, Timer};
+use log::{debug, warn};
+use rea_rs::{ActionHook, ControlSurface, ExtState, FXParent, Reaper, ReaperResult, Timer, FX};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    background_render::track_management::{
-        align_all_instrument_track_orders, rebuild_instrument_list, resolve_unpaired_tracks,
-        BGRenderTrack, TrackRole,
+    background_render::{
+        track_management::{
+            align_all_instrument_track_orders, rebuild_instrument_list, resolve_unpaired_tracks,
+            BGRenderTrack, TrackRole,
+        },
+        Task::MonitorIntrument,
     },
     utils::CachedTrack,
 };
@@ -22,9 +26,10 @@ const ROLE_KEY: &str = "role";
 mod track_management;
 pub use track_management::{create_bg_instrument, make_track_rendered};
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 enum Task {
-    RebuildInstrumentList = 0,
+    RebuildInstrumentList,
+    MonitorIntrument(RenderedInstrument),
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -36,7 +41,11 @@ impl TaskQueue {
     }
 
     fn drain(&mut self) -> Vec<Task> {
-        self.0.drain().collect()
+        let tasks = self.0.drain().collect();
+        if let Err(e) = Self::ext_state().set(self.clone()) {
+            log::error!("can't save ExtState: {}", e);
+        }
+        tasks
     }
     fn ext_state() -> ExtState<'static, Self, Reaper> {
         ExtState::<BackgroundRendererState, Reaper>::existing(
@@ -48,11 +57,11 @@ impl TaskQueue {
         )
     }
 
-    pub(crate) fn queue_task(task: Task) {
+    pub(crate) fn queue_task(task: Task) -> ReaperResult<()> {
         let mut state = Self::ext_state();
         let mut queue = state.get().unwrap_or(None).unwrap_or(TaskQueue::default());
         queue.insert(task);
-        state.set(queue);
+        state.set(queue)
     }
 
     pub(crate) fn load() -> Self {
@@ -82,8 +91,8 @@ impl BackgroundRendererState {
             1024 * 10,
         )
     }
-    fn save(&self) {
-        Self::ext_state().set(self.clone());
+    fn save(&self) -> ReaperResult<()> {
+        Self::ext_state().set(self.clone())
     }
 }
 
@@ -95,16 +104,19 @@ struct MainLoop {}
 
 impl Timer for MainLoop {
     fn run(&mut self) -> Result<(), Box<dyn Error>> {
+        // debug!("run");
         let rpr = Reaper::get_mut();
         let pr = rpr.current_project();
         if !pr.is_stopped()? {
             return Ok(());
         }
         let mut state = BackgroundRendererState::load()?;
+        // debug!("{:#?}", state);
 
         state.is_performing = true;
-        state.save();
+        state.save()?;
         let tasks: Vec<Task> = TaskQueue::load().drain();
+        // debug!("tasks: {:#?}", tasks);
 
         for task in tasks {
             match task {
@@ -114,6 +126,7 @@ impl Timer for MainLoop {
                     state.instruments = instruments;
                     state.unpaired_tracks = unpaired_tracks;
                 }
+                MonitorIntrument(mut instrument) => instrument.set_monitoring()?,
             }
         }
 
@@ -124,7 +137,7 @@ impl Timer for MainLoop {
         }
 
         state.is_performing = false;
-        state.save();
+        state.save()?;
         Ok(())
     }
 
@@ -147,33 +160,149 @@ impl ControlSurface for BGRControlSurface {
     }
 
     fn set_track_list_change(&self) -> anyhow::Result<()> {
+        debug!("set tracklist change");
         if !BackgroundRendererState::load()?.is_performing {
-            TaskQueue::queue_task(Task::RebuildInstrumentList);
+            TaskQueue::queue_task(Task::RebuildInstrumentList)?;
         }
         Ok(())
     }
     fn run(&mut self) -> anyhow::Result<()> {
-        // Reaper::get().midi
+        let edited_tracks = if let Some(editor) = Reaper::get().active_midi_editor() {
+            let mut edited_tracks = HashSet::new();
+            for take in editor.enum_takes(true) {
+                edited_tracks.insert(CachedTrack::from_reaper_track(take.parent_track()?)?);
+            }
+            Some(edited_tracks)
+        } else {
+            None
+        };
+        let mut state = BackgroundRendererState::load()?;
+        for instrument in state.instruments.iter_mut() {
+            let changed = match &edited_tracks {
+                Some(edited_tracks) => {
+                    let (opened, was_opened) = (
+                        edited_tracks.contains(&instrument.instrument),
+                        instrument.opened_in_editor,
+                    );
+                    (opened && !was_opened) || (!opened && was_opened)
+                }
+                None => instrument.opened_in_editor,
+            };
+            if changed {
+                instrument.opened_in_editor = !instrument.opened_in_editor;
+                TaskQueue::queue_task(MonitorIntrument(instrument.clone()))?;
+                debug!(
+                    "MonitorIntrument({}) by midi_editor: {}",
+                    instrument.uuid, instrument.opened_in_editor
+                );
+            }
+        }
+        state.save()?;
+
         Ok(())
     }
     fn set_surface_recarm(&self, track: &mut rea_rs::Track, recarm: bool) -> anyhow::Result<()> {
-        if let Some((_, role)) = track.belongs_to_bgr() {
+        debug!("set_surface_recarm");
+        if let Some((uuid, role)) = track.belongs_to_bgr() {
+            // debug!("track belongs to bgr, getting params");
             if role != TrackRole::Instrument {
                 return Ok(());
             }
             let rec_monitor = recarm && track.rec_monitoring()?.mode > 0;
-            track.monitor(Some(rec_monitor), None);
+            // debug!("looking up for instrument");
+            let Some(mut instrument) = RenderedInstrument::from_uuid(uuid)? else {
+                warn!(
+                    "No Rendered instrument, but with instrument track found. \
+                Could be project initialization, could be an error."
+                );
+                return Ok(());
+            };
+            if instrument.rec_monitor != rec_monitor {
+                instrument.rec_monitor = rec_monitor;
+                TaskQueue::queue_task(Task::MonitorIntrument(instrument.clone()))?;
+                let mut state = BackgroundRendererState::load()?;
+                for state_instr in state.instruments.iter_mut() {
+                    if state_instr.uuid == uuid {
+                        state_instr.rec_monitor = rec_monitor;
+                        break;
+                    }
+                }
+                state.save()?;
+                debug!(
+                    "MonitorIntrument({}) by rec_arm: {}",
+                    instrument.uuid, rec_monitor
+                );
+            }
         }
         Ok(())
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Hash)]
 struct RenderedInstrument {
-    uuid: u128,
-    bus: CachedTrack,
-    rendered: CachedTrack,
-    instrument: CachedTrack,
+    pub uuid: u128,
+    pub bus: CachedTrack,
+    pub rendered: CachedTrack,
+    pub instrument: CachedTrack,
+    #[serde(default)]
+    pub opened_in_editor: bool,
+    #[serde(default)]
+    pub rec_monitor: bool,
+}
+impl RenderedInstrument {
+    pub(crate) fn new(
+        uuid: u128,
+        bus: CachedTrack,
+        rendered: CachedTrack,
+        instrument: CachedTrack,
+    ) -> Self {
+        Self {
+            uuid,
+            bus,
+            rendered,
+            instrument,
+            opened_in_editor: false,
+            rec_monitor: false,
+        }
+    }
+    pub(crate) fn from_uuid(uuid: u128) -> anyhow::Result<Option<Self>> {
+        let state = BackgroundRendererState::load()?;
+        Ok(state
+            .instruments
+            .iter()
+            .find(|instrument| instrument.uuid == uuid)
+            .cloned())
+    }
+    pub(crate) fn set_monitoring(&mut self) -> anyhow::Result<()> {
+        let monitoring = self.opened_in_editor | self.rec_monitor;
+        debug!(
+            "Setting monitoring for track: opened={}, rec_monitor={}, monitoring={}",
+            self.opened_in_editor, self.rec_monitor, monitoring
+        );
+        self.rendered
+            .with_reaper_track(|mut track| track.set_muted(monitoring))?;
+        self.instrument.with_reaper_track(|track| {
+            for mut fx in track.iter_fx() {
+                if !fx.is_instrument()? {
+                    continue;
+                }
+                if !fx.is_online()? {
+                    fx.set_online(monitoring)?
+                }
+                for param in fx.iter_params() {
+                    // debug!("FX param name: {}", param.name()?);
+                    if param.name()? == "Bypass" {
+                        if let Some(mut env) = param.envelope(false)? {
+                            env.set_active(!monitoring)?;
+                        }
+                    }
+                }
+                fx.set_enabled(monitoring)?;
+            }
+            Ok(())
+        })?;
+        Ok(())
+    }
 }
 
 pub fn load_default_state() -> ReaperResult<bool> {
@@ -205,7 +334,7 @@ pub fn set_enabled(enabled: bool) -> Result<(), Box<dyn Error>> {
     let running = rpr.has_control_surface(&id);
 
     if enabled && !running {
-        TaskQueue::queue_task(Task::RebuildInstrumentList);
+        TaskQueue::queue_task(Task::RebuildInstrumentList)?;
         let cs = BGRControlSurface {};
         let timer = MainLoop {};
         rpr.register_control_surface(Arc::new(RefCell::new(cs)));
@@ -215,7 +344,7 @@ pub fn set_enabled(enabled: bool) -> Result<(), Box<dyn Error>> {
         rpr.unregister_timer(TIMER_ID_STRING.to_string())?;
     }
 
-    save_default_state(enabled);
+    save_default_state(enabled)?;
     Ok(())
 }
 

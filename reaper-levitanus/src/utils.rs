@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::LevitanusError;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Eq, Hash)]
 pub(crate) struct CachedTrack {
     pub index: usize,
     pub guid: String,
@@ -202,6 +202,7 @@ impl<'a> CacheToSend<'a> for TrackReceive<'a> {}
 impl<'a> CacheToSend<'a> for HardwareSend<'a> {}
 
 pub(crate) fn create_send(source: &mut CachedTrack, dest: &mut CachedTrack) -> anyhow::Result<()> {
+    debug!("creating send from {:#?} to {:#?}", source, dest);
     dest.validate()?;
     source.validate()?;
     let rpr = Reaper::get();
@@ -212,7 +213,7 @@ pub(crate) fn create_send(source: &mut CachedTrack, dest: &mut CachedTrack) -> a
     let bus = pr
         .get_track(dest.index)?
         .ok_or(LevitanusError::Unexpected("No track at given index".into()))?;
-    TrackSend::create_new(&rendered, &bus);
+    TrackSend::create_new(&rendered, &bus)?;
     Ok(())
 }
 
