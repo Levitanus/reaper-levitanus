@@ -1,11 +1,16 @@
-use std::{cell::RefCell, collections::HashSet, error::Error, sync::Arc, time::Duration};
+use std::{cell::RefCell, collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
 
+use anyhow::Error;
 use log::{debug, warn};
-use rea_rs::{ActionHook, ControlSurface, ExtState, FXParent, Reaper, ReaperResult, Timer, FX};
+use rea_rs::{
+    project_info::{RenderTail, RenderTailFlags},
+    ActionHook, ControlSurface, ExtState, FXParent, HasExtState, Reaper, ReaperResult,
+    RenderFormat, Timer, FX,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    background_render::{
+    autofreeze::{
         track_management::{
             align_all_instrument_track_orders, rebuild_instrument_list, resolve_unpaired_tracks,
             BGRenderTrack, TrackRole,
@@ -13,6 +18,7 @@ use crate::{
         Task::MonitorIntrument,
     },
     utils::CachedTrack,
+    LevitanusResult,
 };
 
 const ID_STRING: &str = "BackgroudRenderer";
@@ -25,6 +31,8 @@ const ROLE_KEY: &str = "role";
 
 mod track_management;
 pub use track_management::{create_bg_instrument, make_track_rendered};
+pub mod render;
+pub use render::action_freeze_selected_items;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 enum Task {
@@ -96,6 +104,35 @@ impl BackgroundRendererState {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PersistentState {
+    pub enabled: bool,
+    freeze_directory: PathBuf,
+    pub render_tail: RenderTail,
+    pub render_format: RenderFormat,
+}
+impl PersistentState {
+    fn freeze_directory(&self) -> ReaperResult<PathBuf> {
+        match self.freeze_directory.is_absolute() {
+            true => Ok(self.freeze_directory.clone()),
+            false => {
+                let pr_path = Reaper::get().current_project().get_path()?;
+                Ok(pr_path.join(self.freeze_directory.clone()))
+            }
+        }
+    }
+}
+impl Default for PersistentState {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            freeze_directory: PathBuf::from("freezed"),
+            render_tail: RenderTail::new(Duration::from_secs(1), RenderTailFlags::all()),
+            render_format: RenderFormat::WavePack,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct BGRControlSurface {}
 
@@ -103,7 +140,7 @@ struct BGRControlSurface {}
 struct MainLoop {}
 
 impl Timer for MainLoop {
-    fn run(&mut self) -> Result<(), anyhow::Error> {
+    fn run(&mut self) -> Result<(), Error> {
         // debug!("run");
         let rpr = Reaper::get_mut();
         let pr = rpr.current_project();
@@ -244,9 +281,9 @@ struct RenderedInstrument {
     pub bus: CachedTrack,
     pub rendered: CachedTrack,
     pub instrument: CachedTrack,
-    #[serde(default)]
+    // #[serde(default)]
     pub opened_in_editor: bool,
-    #[serde(default)]
+    // #[serde(default)]
     pub rec_monitor: bool,
 }
 impl RenderedInstrument {
@@ -283,9 +320,6 @@ impl RenderedInstrument {
             .with_reaper_track(|mut track| track.set_muted(monitoring))?;
         self.instrument.with_reaper_track(|track| {
             for mut fx in track.iter_fx() {
-                if !fx.is_instrument()? {
-                    continue;
-                }
                 if !fx.is_online()? {
                     fx.set_online(monitoring)?
                 }
@@ -305,22 +339,24 @@ impl RenderedInstrument {
     }
 }
 
-pub fn load_default_state() -> ReaperResult<bool> {
+pub fn load_default_state() -> ReaperResult<PersistentState> {
     let rpr = Reaper::get();
-    let ext_state: ExtState<bool, Reaper> =
-        ExtState::new(EXT_SECTION, EXT_KEY, None, true, rpr, None)?;
-
-    match ext_state.get() {
-        Ok(Some(value)) => Ok(value),
-        Ok(None) => Ok(false),
-        Err(_) => Ok(false),
-    }
+    let ext_state: ExtState<PersistentState, Reaper> = ExtState::new(
+        EXT_SECTION,
+        EXT_KEY,
+        PersistentState::default(),
+        true,
+        rpr,
+        None,
+    )?;
+    Ok(ext_state.get()?.unwrap_or_default())
 }
 
-pub fn save_default_state(enabled: bool) -> ReaperResult<()> {
+pub fn save_default_state(state: PersistentState) -> ReaperResult<()> {
     let rpr = Reaper::get();
-    let mut ext_state = ExtState::new(EXT_SECTION, EXT_KEY, Some(enabled), true, rpr, None)?;
-    ext_state.set(enabled)
+    let mut ext_state =
+        ExtState::<PersistentState, Reaper>::existing(EXT_SECTION, EXT_KEY, true, rpr, None);
+    ext_state.set(state)
 }
 
 pub fn is_running() -> bool {
@@ -328,10 +364,10 @@ pub fn is_running() -> bool {
     Reaper::get().has_control_surface(&id)
 }
 
-pub fn set_enabled(enabled: bool) -> Result<(), anyhow::Error> {
+pub fn set_enabled(enabled: bool) -> Result<(), Error> {
     let rpr = Reaper::get_mut();
     let id = ID_STRING.to_string();
-    let running = rpr.has_control_surface(&id);
+    let running = is_running();
 
     if enabled && !running {
         TaskQueue::queue_task(Task::RebuildInstrumentList)?;
@@ -343,19 +379,25 @@ pub fn set_enabled(enabled: bool) -> Result<(), anyhow::Error> {
         rpr.unregister_control_surface(id)?;
         rpr.unregister_timer(TIMER_ID_STRING.to_string())?;
     }
-
-    save_default_state(enabled)?;
+    let mut state = load_default_state()?;
+    state.enabled = enabled;
+    save_default_state(state)?;
     Ok(())
 }
 
-pub fn restore_default_state() -> Result<bool, anyhow::Error> {
-    let enabled = load_default_state()?;
-    set_enabled(enabled)?;
-    Ok(enabled)
+pub fn restore_default_state() -> Result<PersistentState, Error> {
+    let state = load_default_state()?;
+    set_enabled(state.enabled)?;
+    Ok(state)
 }
 
-pub fn toggle_action(hook: &mut ActionHook) -> Result<(), anyhow::Error> {
-    let next_state = !is_running();
+pub fn delete_default_state() -> LevitanusResult<()> {
+    Ok(Reaper::get().delete_ext_value(EXT_SECTION, EXT_KEY)?)
+}
+
+pub fn toggle_action(hook: &mut ActionHook) -> Result<(), Error> {
+    let next_state = !hook.toggle_state().expect("should be bool here");
+    debug!("toggling background renderer with {next_state}");
     set_enabled(next_state)?;
     hook.set_toggle_state(next_state);
     Ok(())

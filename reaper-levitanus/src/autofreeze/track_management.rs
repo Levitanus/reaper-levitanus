@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    background_render::{RenderedInstrument, EXT_SECTION, ROLE_KEY, UUID_KEY},
+    autofreeze::{RenderedInstrument, EXT_SECTION, ROLE_KEY, UUID_KEY},
     utils::{cache_and_remove_track_sends, create_send, CachedTrack},
     LevitanusError,
 };
@@ -191,7 +191,9 @@ fn move_track_before(track: &mut CachedTrack, before_index: usize) -> anyhow::Re
         .low()
         .ReorderSelectedTracks(before_index as i32, 0);
     if !moved {
-        return Err(LevitanusError::Reaper("Failed to reorder selected tracks".to_string()).into());
+        return Err(
+            LevitanusError::Unexpected("Failed to reorder selected tracks".to_string()).into(),
+        );
     }
 
     if !selected_guids.is_empty() {

@@ -1,8 +1,9 @@
+use rea_rs::ReaRsError;
 use thiserror::Error;
 
 pub mod envelope_snap;
 // pub mod ffmpeg;
-pub mod background_render;
+pub mod autofreeze;
 pub mod ffmpeg_new;
 pub mod normalization;
 pub mod otio_export;
@@ -22,8 +23,8 @@ pub enum LevitanusError {
     Enum(String),
     #[error("KeyError: {0} has no key {1}")]
     KeyError(String, String),
-    #[error("ReaperError, original message: {0}")]
-    Reaper(String),
+    #[error("ReaperError")]
+    Reaper(#[from] ReaRsError),
     #[error("RenderError, original message: {0}")]
     Render(String),
     #[error("TrackValidationError, Can not find track with GUID {0}")]
@@ -31,3 +32,5 @@ pub enum LevitanusError {
     #[error("Invalid object")]
     InvalidObject,
 }
+
+type LevitanusResult<T> = Result<T, LevitanusError>;
