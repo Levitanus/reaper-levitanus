@@ -3,8 +3,7 @@ use std::{collections::HashSet, path::PathBuf};
 use anyhow::anyhow;
 use log::debug;
 use rea_rs::{
-    project_info::{BoundsMode, RenderMode},
-    Duration, Position, Project, ReaperResult, SoloMode, SourceOffset,
+    BoundsMode, Duration, Position, Project, ReaperResult, RenderMode, SoloMode, SourceOffset,
 };
 
 pub(super) const DEFAULT_RENDER_TARGETS_BUF_SIZE: usize = 1024;

@@ -3,9 +3,8 @@ use std::{cell::RefCell, collections::HashSet, path::PathBuf, sync::Arc, time::D
 use anyhow::Error;
 use log::{debug, warn};
 use rea_rs::{
-    project_info::{RenderTail, RenderTailFlags},
     ActionHook, ControlSurface, ExtState, FXParent, HasExtState, Reaper, ReaperResult,
-    RenderFormat, Timer, FX,
+    RenderFormat, RenderTail, RenderTailFlags, Timer, FX,
 };
 use serde::{Deserialize, Serialize};
 
@@ -203,7 +202,7 @@ impl ControlSurface for BGRControlSurface {
         }
         Ok(())
     }
-    fn run(&mut self) -> anyhow::Result<()> {
+    fn run(&self) -> anyhow::Result<()> {
         let edited_tracks = if let Some(editor) = Reaper::get().active_midi_editor() {
             let mut edited_tracks = HashSet::new();
             for take in editor.enum_takes(true) {

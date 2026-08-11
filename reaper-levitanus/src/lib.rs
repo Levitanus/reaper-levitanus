@@ -8,6 +8,7 @@ pub mod ffmpeg_new;
 pub mod normalization;
 pub mod otio_export;
 pub mod utils;
+pub mod notation;
 
 #[derive(Debug, Error)]
 pub enum LevitanusError {

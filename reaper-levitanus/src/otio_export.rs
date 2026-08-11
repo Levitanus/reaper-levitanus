@@ -8,7 +8,7 @@ use std::{
 use anyhow::anyhow;
 use log::{info, warn};
 use rea_rs::{
-    project_info::{BoundsMode, RenderMode},
+    {BoundsMode, RenderMode},
     CommandId, ExtState, MessageBoxType, MessageBoxValue, Position, Project, Reaper, ReaperResult,
     SoloMode, Take,
 };

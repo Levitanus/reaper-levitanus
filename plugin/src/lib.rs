@@ -7,8 +7,8 @@ use reaper_levitanus::{
         make_track_rendered, restore_default_state, toggle_action as toggle_background_renderer,
     },
     envelope_snap::register_envelope_actions,
-    ffmpeg_new::ffmpeg_gui,
     normalization::normalize_all_takes_on_selected_items,
+    notation::test_notation,
     otio_export::{export_otio_project, export_youtube_timecodes, set_project_fps, OtioFpsPolicy},
 };
 
@@ -44,19 +44,19 @@ fn plugin_main(context: PluginContext) -> Result<(), anyhow::Error> {
         Ok(_) => (),
     }
 
-    // FFMPEG
-    {
-        let res = rpr.register_action(
-            "LEVITANUS_FFMPEG_GUI",
-            "ffmpeg GUI",
-            ActionKind::NotToggleable,
-            |_| ffmpeg_gui(),
-            None,
-        );
-        if let Err(err) = res {
-            log_error("can not register ffmpeg gui", err)
-        }
-    }
+    // // FFMPEG
+    // {
+    //     let res = rpr.register_action(
+    //         "LEVITANUS_FFMPEG_GUI",
+    //         "ffmpeg GUI",
+    //         ActionKind::NotToggleable,
+    //         |_| ffmpeg_gui(),
+    //         None,
+    //     );
+    //     if let Err(err) = res {
+    //         log_error("can not register ffmpeg gui", err)
+    //     }
+    // }
 
     // AUTOFREEZE
     {
@@ -173,6 +173,20 @@ fn plugin_main(context: PluginContext) -> Result<(), anyhow::Error> {
         );
         if let Err(err) = res {
             log_error("can not register OTIO timecodes export", err)
+        }
+    }
+
+    // NOTATION
+    {
+        let res = rpr.register_action(
+            "LEVITANUS_NOTATION_TEST",
+            "Levitanus Notation: test",
+            ActionKind::NotToggleable,
+            |_| test_notation(),
+            None,
+        );
+        if let Err(err) = res {
+            log_error("can not register Levitanus Notation: test", err)
         }
     }
 

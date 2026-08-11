@@ -40,6 +40,8 @@ eframe = {version = "0.31", default-features = false, features = [
   "x11",
 ]}
 egui = "0.31"
+verovioxide = "0.3"
+verovioxide-sys = { version = "0.3", features = ["prebuilt"] }
 
 [lib]
 crate-type = ["lib"]

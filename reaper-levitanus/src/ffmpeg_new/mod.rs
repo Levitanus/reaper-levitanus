@@ -378,7 +378,7 @@ impl FfmpegGuiSurface {
         Ok(())
     }
 
-    fn process_gui_messages(&mut self) -> anyhow::Result<()> {
+    fn process_gui_messages(&self) -> anyhow::Result<()> {
         for msg in self.message_bus.drain_for_surface() {
             match msg {
                 GuiToSurfaceMessage::CloseRequested => {
@@ -407,7 +407,7 @@ impl FfmpegGuiSurface {
         Ok(())
     }
 
-    fn start_render(&mut self) -> anyhow::Result<()> {
+    fn start_render(&self) -> anyhow::Result<()> {
         let elements = self
             .gui_elements_state
             .lock()
@@ -645,7 +645,7 @@ impl Drop for FfmpegGuiSurface {
 }
 
 impl ControlSurface for FfmpegGuiSurface {
-    fn run(&mut self) -> anyhow::Result<()> {
+    fn run(&self) -> anyhow::Result<()> {
         self.window.poll_resize();
 
         if let Ok(mut last_auto_refresh_at) = self.last_auto_refresh_at.lock() {
