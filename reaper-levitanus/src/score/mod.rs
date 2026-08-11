@@ -1,7 +1,8 @@
-use fraction::Ratio;
 use log::{debug, warn};
 use rea_rs::{MidiMessage, MidiNoteEvent, Notation, NotationMessage, Reaper};
 use serde::{Deserialize, Serialize};
+
+mod dom;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct NoteWithNotation {
@@ -57,28 +58,4 @@ pub fn test_notation() -> anyhow::Result<()> {
     debug!("TRACK NOTATIONS:\n{:#?}", track_notations);
 
     Ok(())
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct Score {
-    parts: Vec<Part>,
-}
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct Part {
-    staves: Vec<Staff>,
-}
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct Staff {
-    measures: Vec<Measure>,
-}
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct Measure {
-    time_signature: TimeSignature,
-    events: Vec<Event>,
-}
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-struct TimeSignature {
-    numerator: u32,
-    denominator: u32,
-    visual_representation: Option<(String, String)>,
 }

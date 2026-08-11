@@ -31,7 +31,7 @@ int-enum = "1.1.2"
 url = "2.5.0"
 uuid = {version = "1.8.0", features = ["v4"]}
 
-eframe = {version = "0.31", default-features = false, features = [
+eframe = {version = "0.36", default-features = false, features = [
   "accesskit", # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
   "default_fonts", # Embed the default egui fonts.
   "glow", # Use the glow rendering backend. Alternative: "wgpu".
@@ -39,9 +39,11 @@ eframe = {version = "0.31", default-features = false, features = [
   "wayland", # To support Linux (and CI)
   "x11",
 ]}
-egui = "0.31"
 verovioxide = "0.3"
 verovioxide-sys = { version = "0.3", features = ["prebuilt"] }
+egui = "0.36"
+postcard = "1.1.3"
+musical-note = "0.1.105"
 
 [lib]
 crate-type = ["lib"]

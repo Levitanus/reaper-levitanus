@@ -8,8 +8,8 @@ use reaper_levitanus::{
     },
     envelope_snap::register_envelope_actions,
     normalization::normalize_all_takes_on_selected_items,
-    notation::test_notation,
     otio_export::{export_otio_project, export_youtube_timecodes, set_project_fps, OtioFpsPolicy},
+    score::test_notation,
 };
 
 #[reaper_extension_plugin]
