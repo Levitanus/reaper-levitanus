@@ -6,7 +6,7 @@ version = "0.0.1"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rea-rs = {workspace = true, features = ["egui-baseview"]}
+rea-rs = {workspace = true}
 rea-rs-low = {workspace = true}
 rea-rs-macros = {workspace = true}
 
@@ -31,17 +31,8 @@ int-enum = "1.1.2"
 url = "2.5.0"
 uuid = {version = "1.8.0", features = ["v4"]}
 
-eframe = {version = "0.35", default-features = false, features = [
-  "accesskit", # Make egui compatible with screen readers. NOTE: adds a lot of dependencies.
-  "default_fonts", # Embed the default egui fonts.
-  "glow", # Use the glow rendering backend. Alternative: "wgpu".
-  "persistence", # Enable restoring app state when restarting the app.
-  "wayland", # To support Linux (and CI)
-  "x11",
-]}
 verovioxide = "0.3"
 verovioxide-sys = { version = "0.3", features = ["prebuilt"] }
-egui = "0.35"
 musical-note = "0.1.105"
 musicxml = "1.1"
 

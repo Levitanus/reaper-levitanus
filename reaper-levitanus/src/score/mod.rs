@@ -1,8 +1,7 @@
 use anyhow::anyhow;
-use egui::text_selection::visuals;
 use rea_rs::{
     keys::{FVirt, KeyBinding, VKeys},
-    ActionKind, ActionRegistrationOptions, ActionSections, Reaper, Section,
+    ActionKind, ActionRegistrationOptions, ActionSections, ExtState, Reaper, Section,
 };
 
 pub use crate::score::midi_processing::get_notations_of_item;
@@ -17,6 +16,9 @@ mod midi_editor_overlay;
 mod midi_processing;
 mod musicxml_example;
 mod visual_quantize_editor;
+
+pub const EXT_SEXTION: &'static str = "REASCORE";
+pub const QUANTIZE_EDITOR_COMMAND_ID: &'static str = "quantize_editor_command_id";
 
 pub fn register_score_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
     rpr.register_action(
@@ -59,7 +61,7 @@ pub fn register_score_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
         None,
     )?;
 
-    rpr.register_action(
+    let id = rpr.register_action(
         "LEVITANUS_SCORE_VQUANTIZE_EDITOR",
         "rea-score: visual quantize editor",
         ActionKind::Toggleable(false),
@@ -68,6 +70,14 @@ pub fn register_score_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
             Section::MidiEditor,
             Section::MidiInlineEditor,
         ])),
+    )?;
+    ExtState::new(
+        EXT_SEXTION,
+        QUANTIZE_EDITOR_COMMAND_ID,
+        id.command_id,
+        false,
+        rpr,
+        None,
     )?;
     rpr.register_action(
         "LEVITANUS_SCORE_EDITOR_OVERLAY",

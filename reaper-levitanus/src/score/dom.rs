@@ -78,5 +78,6 @@ pub(super) struct ScoreLength {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct VisualQuantize {
-    ratio: Fraction,
+    pub unit: Fraction,
+    pub ratio: Fraction,
 }

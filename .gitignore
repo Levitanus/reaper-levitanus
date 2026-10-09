@@ -12,3 +12,5 @@ Cargo.lock
 *.sublime-workspace
 
 test/Backups/
+
+.sublime-tests/

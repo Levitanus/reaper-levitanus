@@ -13,7 +13,7 @@
          <supports element="stem" type="yes"/>
       </encoding>
    </identification>
-   <!-- <defaults>
+   <defaults>
       <scaling>
          <millimeters>6.35</millimeters>
          <tenths>40</tenths>
@@ -59,7 +59,7 @@
       <word-font font-family="Times New Roman" font-size="8.25"/>
       <lyric-font font-family="Times New Roman" font-size="10"/>
       <lyric-language xml:lang="fr"/>
-   </defaults> -->
+   </defaults>
    <part-list>
       <score-part id="P1">
          <part-name print-object="no">Voice</part-name>
