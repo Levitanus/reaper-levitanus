@@ -3,8 +3,8 @@ use std::{cell::RefCell, collections::HashSet, path::PathBuf, sync::Arc, time::D
 use anyhow::Error;
 use log::{debug, warn};
 use rea_rs::{
-    ActionHook, ControlSurface, ExtState, FXParent, HasExtState, Reaper, ReaperResult,
-    RenderFormat, RenderTail, RenderTailFlags, Timer, FX,
+    ActionHook, ActionKind, ControlSurface, ExtState, FXParent, HasExtState, MessageBoxValue,
+    Reaper, ReaperResult, RenderFormat, RenderTail, RenderTailFlags, Timer, FX,
 };
 use serde::{Deserialize, Serialize};
 
@@ -32,6 +32,54 @@ mod track_management;
 pub use track_management::{create_bg_instrument, make_track_rendered};
 pub mod render;
 pub use render::action_freeze_selected_items;
+
+pub fn register_autofreeze_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
+    if let Err(err) = restore_default_state() {
+        rpr.show_console_msg(format!("Error occurred:\n{}", err.to_string()));
+        if rpr.show_message_box(
+            "Corrupted Autofreeze State",
+            "The state for Autofreeze is corrupted. \
+            Probably, version mismatch.\n\n Apply default state?",
+            rea_rs::MessageBoxType::YesNo,
+        )? == MessageBoxValue::Yes
+        {
+            delete_default_state()?;
+        }
+    }
+
+    rpr.register_action(
+        "LEVITANUS_AUTOFREEZE",
+        "Autofreeze: toggle",
+        ActionKind::Toggleable(is_running()),
+        |hook| toggle_action(hook),
+        None,
+    )?;
+
+    rpr.register_action(
+        "LEVITANUS_AUTOFREEZE_CREATE_INSTRUMENT",
+        "Autofreeze: create instrument",
+        ActionKind::NotToggleable,
+        |hook| create_bg_instrument(hook),
+        None,
+    )?;
+
+    rpr.register_action(
+        "LEVITANUS_AUTOFREEZE_ADD_TRACK",
+        "Autofreeze: make track autofreezed",
+        ActionKind::NotToggleable,
+        |hook| make_track_rendered(hook),
+        None,
+    )?;
+
+    rpr.register_action(
+        "LEVITANUS_AUTOFREEZE_FREEZE_ITEMS",
+        "Autofreeze: freeze selected items",
+        ActionKind::NotToggleable,
+        |hook| action_freeze_selected_items(hook),
+        None,
+    )?;
+    Ok(())
+}
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 enum Task {

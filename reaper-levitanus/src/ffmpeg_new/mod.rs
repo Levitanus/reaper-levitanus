@@ -2,7 +2,6 @@ use std::{
     cell::Cell,
     cell::RefCell,
     collections::VecDeque,
-    error::Error,
     fmt,
     path::{Path, PathBuf},
     sync::{
@@ -16,8 +15,8 @@ use anyhow::anyhow;
 use log::debug;
 use rea_rs::{
     gui::{self, DockableEguiWindow},
-    CommandId, ControlSurface, ExtState, MessageBoxType, MessageBoxValue, Project, Reaper,
-    ReaperResult, Track,
+    ActionKind, CommandId, ControlSurface, ExtState, MessageBoxType, MessageBoxValue, Project,
+    Reaper, ReaperResult, Track,
 };
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +33,17 @@ use crate::ffmpeg_new::render_targets::FALLBACK_RENDER_TARGETS_BUF_SIZE;
 pub static BACKEND_ID_STRING: &str = "LevitanusFfmpegGuiNew";
 const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const RENDER_PROJECT_USING_LAST_SETTINGS_ACTION: u32 = 41824;
+
+pub fn register_ffmpeg_acions(rpr: &mut Reaper) -> anyhow::Result<()> {
+    rpr.register_action(
+        "LEVITANUS_FFMPEG_GUI",
+        "ffmpeg GUI",
+        ActionKind::NotToggleable,
+        |_| ffmpeg_gui(),
+        None,
+    )?;
+    Ok(())
+}
 
 #[derive(Debug, Clone)]
 enum GuiToSurfaceMessage {

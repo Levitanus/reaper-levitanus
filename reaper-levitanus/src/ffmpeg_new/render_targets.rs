@@ -2,9 +2,7 @@ use std::{collections::HashSet, path::PathBuf};
 
 use anyhow::anyhow;
 use log::debug;
-use rea_rs::{
-    BoundsMode, Duration, Position, Project, ReaperResult, RenderMode, SoloMode, SourceOffset,
-};
+use rea_rs::{BoundsMode, Duration, Position, Project, ReaperResult, RenderMode, SoloMode};
 
 pub(super) const DEFAULT_RENDER_TARGETS_BUF_SIZE: usize = 1024;
 pub(super) const FALLBACK_RENDER_TARGETS_BUF_SIZE: usize = 1024 * 10;
@@ -22,7 +20,7 @@ pub(super) struct RenderTarget {
     pub(super) stretch_ratio: f64,
     pub(super) availble_for_render: AvailbleForRender,
     pub(super) duration: Duration,
-    pub(super) source_offset: SourceOffset,
+    pub(super) source_offset: Position,
 }
 
 #[derive(Debug, Clone)]
@@ -175,7 +173,7 @@ fn build_render_target_from_plan(
         stretch_ratio: 1.0,
         availble_for_render: AvailbleForRender::NoVideo,
         duration,
-        source_offset: SourceOffset::from_secs_f64(0.0),
+        source_offset: Position::from_secs_f64(0.0),
     })
 }
 

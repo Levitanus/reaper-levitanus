@@ -1,61 +1,99 @@
-use log::{debug, warn};
-use rea_rs::{MidiMessage, MidiNoteEvent, Notation, NotationMessage, Reaper};
-use serde::{Deserialize, Serialize};
+use anyhow::anyhow;
+use egui::text_selection::visuals;
+use rea_rs::{
+    keys::{FVirt, KeyBinding, VKeys},
+    ActionKind, ActionRegistrationOptions, ActionSections, Reaper, Section,
+};
+
+pub use crate::score::midi_processing::get_notations_of_item;
+use crate::score::{
+    midi_editor_overlay::toggle_midi_editor_overlay,
+    midi_processing::{mark_selected_notes_as_staff, mark_selected_notes_as_voice},
+    visual_quantize_editor::toggle_visual_quantize_editor,
+};
 
 mod dom;
+mod midi_editor_overlay;
+mod midi_processing;
+mod musicxml_example;
+mod visual_quantize_editor;
 
-#[derive(Debug, Serialize, Deserialize)]
-struct NoteWithNotation {
-    note: MidiNoteEvent,
-    notation: Option<Vec<String>>,
+pub fn register_score_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
+    rpr.register_action(
+        "LEVITANUS_SCORE_MARK_VOICE_1",
+        "rea-score: move selected notes to the voice 1",
+        rea_rs::ActionKind::NotToggleable,
+        |_| mark_selected_notes_as_voice(None),
+        ActionRegistrationOptions::new(ActionSections::Sections(vec![
+            Section::Main,
+            Section::MidiEditor,
+        ]))
+        .with_default_key_binding(KeyBinding::new(
+            FVirt::FVIRTKEY | FVirt::FALT,
+            VKeys::VK_F3 as u16,
+        )),
+    )?;
+    rpr.register_action(
+        "LEVITANUS_SCORE_MARK_VOICE_2",
+        "rea-score: move selected notes to the voice 2",
+        rea_rs::ActionKind::NotToggleable,
+        |_| mark_selected_notes_as_voice(Some(2)),
+        ActionRegistrationOptions::new(ActionSections::Sections(vec![
+            Section::Main,
+            Section::MidiEditor,
+        ]))
+        .with_default_key_binding(KeyBinding::new(FVirt::FVIRTKEY, VKeys::VK_F3 as u16)),
+    )?;
+    rpr.register_action(
+        "LEVITANUS_SCORE_MARK_STAFF_1",
+        "rea-score: move selected notes to the staff 1",
+        rea_rs::ActionKind::NotToggleable,
+        |_| mark_selected_notes_as_staff(None),
+        None,
+    )?;
+    rpr.register_action(
+        "LEVITANUS_SCORE_MARK_STAFF_2",
+        "rea-score: move selected notes to the staff 2",
+        rea_rs::ActionKind::NotToggleable,
+        |_| mark_selected_notes_as_staff(Some(2)),
+        None,
+    )?;
+
+    rpr.register_action(
+        "LEVITANUS_SCORE_VQUANTIZE_EDITOR",
+        "rea-score: visual quantize editor",
+        ActionKind::Toggleable(false),
+        toggle_visual_quantize_editor,
+        ActionRegistrationOptions::new(ActionSections::Sections(vec![
+            Section::MidiEditor,
+            Section::MidiInlineEditor,
+        ])),
+    )?;
+    rpr.register_action(
+        "LEVITANUS_SCORE_EDITOR_OVERLAY",
+        "rea-score: toggle MIDI Editor overaly",
+        ActionKind::Toggleable(false),
+        toggle_midi_editor_overlay,
+        ActionRegistrationOptions::new(ActionSections::Section(Section::MidiEditor)),
+    )?;
+    Ok(())
 }
 
-pub fn test_notation() -> anyhow::Result<()> {
-    let Some(item) = Reaper::get().current_project().get_selected_item(0)? else {
-        warn!("no selected item");
-        return Ok(());
-    };
-    let take = item.active_take()?;
-    if !take.is_midi()? {
-        warn!("take is not MIDI");
-        return Ok(());
-    }
-    let iterator = take.iter_midi(None)?;
-
-    let mut notes: Vec<NoteWithNotation> = iterator
-        .clone()
-        .filter_notes()
-        .map(|event| NoteWithNotation {
-            note: event,
-            notation: None,
-        })
-        .collect();
-    let mut track_notations = Vec::new();
-    for event in iterator.filter_all_sys() {
-        if let Some(msg) = NotationMessage::from_raw(event.message().get_raw()) {
-            match msg.notation() {
-                Notation::Note {
-                    channel,
-                    note: n_note,
-                    tokens,
-                } => {
-                    for note in notes.iter_mut() {
-                        if note.note.start_in_ppq == event.ppq_position()
-                            && note.note.channel == channel
-                            && note.note.note == n_note
-                        {
-                            note.notation = Some(tokens);
-                            break;
-                        }
-                    }
-                }
-                Notation::Track(n) => track_notations.push((event.ppq_position(), n)),
-                Notation::Unknown(n) => warn!("unknown notation: {:?}", n),
-            }
-        }
-    }
-    debug!("NOTES WITH NOTATIONS:\n{:#?}", notes);
-    debug!("TRACK NOTATIONS:\n{:#?}", track_notations);
-
+pub fn register_score_test_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
+    rpr.register_action(
+        "LEVITANUS_SCORE_PRINT_ITEM_NOTATIONS",
+        "rea-score: print item notations",
+        rea_rs::ActionKind::NotToggleable,
+        |_| {
+            let item = Reaper::get()
+                .current_project()
+                .get_selected_item(0)?
+                .ok_or(anyhow!("no selected item"))?;
+            let res = get_notations_of_item(item)?;
+            println!("{:#?}", res);
+            Ok(())
+        },
+        None,
+    )?;
     Ok(())
 }

@@ -1,4 +1,4 @@
-use log::debug;
+use log::{debug, error};
 use rea_rs::{
     AutomationMode, GenericSend, GenericSendMut, HardwareSend, Pan, PanLaw, Reaper, ReaperResult,
     SendDestChannels, SendIntType, SendMIDIProps, SendMode, SendSourceChannels, SendType, Track,
@@ -15,17 +15,17 @@ pub(crate) struct CachedTrack {
 }
 impl CachedTrack {
     /// The simplest way to construct a track witout overhead
-    pub fn new(index: usize, guid: GUID) -> Self {
-        Self {
+    pub fn new(index: usize, guid: GUID) -> ReaperResult<Self> {
+        Ok(Self {
             index,
-            guid: guid.to_string(),
-        }
+            guid: guid.to_string()?,
+        })
     }
     pub fn from_index(index: usize) -> ReaperResult<Option<Self>> {
         let Some(track) = Reaper::get().current_project().get_track(index)? else {
             return Ok(None);
         };
-        let guid = track.guid()?.to_string();
+        let guid = track.guid()?.to_string()?;
         Ok(Some(Self { index, guid }))
     }
     pub fn from_guid(guid: GUID) -> ReaperResult<Option<Self>> {
@@ -40,20 +40,24 @@ impl CachedTrack {
         };
         Ok(Some(Self {
             index: track.index()?,
-            guid: guid.to_string(),
+            guid: guid.to_string()?,
         }))
     }
     pub fn validate(&mut self) -> anyhow::Result<()> {
         let rpr = Reaper::get();
         let pr = rpr.current_project();
         if let Some(track) = pr.get_track(self.index)? {
-            if track.guid()?.to_string() == self.guid {
+            if track.guid()?.to_string()? == self.guid {
                 return Ok(());
             }
         }
         if let Some(track) = pr.iter_tracks().find(|track| {
             if let Ok(t_guid) = track.guid() {
-                t_guid.to_string() == self.guid
+                let Ok(guid) = t_guid.to_string() else {
+                    error!("track {:?} returned unvalid GUID", track);
+                    return false;
+                };
+                guid == self.guid
             } else {
                 false
             }
@@ -78,7 +82,7 @@ impl CachedTrack {
     pub fn from_reaper_track(value: Track) -> ReaperResult<Self> {
         Ok(Self {
             index: value.index()?,
-            guid: value.guid()?.to_string(),
+            guid: value.guid()?.to_string()?,
         })
     }
 }
@@ -139,14 +143,14 @@ trait SendToCache<'a>: SendIntType + Sized + GenericSend<'a> {
         let source_track = match self.source_track()? {
             Some(tr) => Some(CachedTrack {
                 index: tr.index()?,
-                guid: tr.guid()?.to_string(),
+                guid: tr.guid()?.to_string()?,
             }),
             None => None,
         };
         let dest_track = match self.dest_track()? {
             Some(tr) => Some(CachedTrack {
                 index: tr.index()?,
-                guid: tr.guid()?.to_string(),
+                guid: tr.guid()?.to_string()?,
             }),
             None => None,
         };
@@ -222,7 +226,7 @@ pub(crate) fn cache_and_remove_track_sends(track: &mut Track) -> ReaperResult<Ve
     let mut sends = Vec::new();
     debug!("caching track sends");
     for idx in (0..track.n_sends()?).rev() {
-        let send = match track.get_send(idx) {
+        let send = match track.get_send(idx)? {
             Some(s) => s,
             None => break,
         };
@@ -235,7 +239,7 @@ pub(crate) fn cache_and_remove_track_sends(track: &mut Track) -> ReaperResult<Ve
     }
     debug!("caching track receives");
     for idx in (0..track.n_receives()?).rev() {
-        let send = match track.get_recieve(idx) {
+        let send = match track.get_receive(idx)? {
             Some(s) => s,
             None => break,
         };
@@ -248,7 +252,7 @@ pub(crate) fn cache_and_remove_track_sends(track: &mut Track) -> ReaperResult<Ve
     }
     debug!("caching track hardware sends");
     for idx in (0..track.n_hardware_sends()?).rev() {
-        let send = match track.get_hardware_send(idx) {
+        let send = match track.get_hardware_send(idx)? {
             Some(s) => s,
             None => break,
         };

@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    error::Error,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -8,9 +7,8 @@ use std::{
 use anyhow::anyhow;
 use log::{info, warn};
 use rea_rs::{
-    {BoundsMode, RenderMode},
-    CommandId, ExtState, MessageBoxType, MessageBoxValue, Position, Project, Reaper, ReaperResult,
-    SoloMode, Take,
+    ActionKind, BoundsMode, CommandId, ExtState, MessageBoxType, MessageBoxValue, Position,
+    Project, Reaper, ReaperResult, RenderMode, SoloMode, Take,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -25,6 +23,49 @@ const KDENLIVE_COMPAT_DISABLE_TIMEWARP: bool = false;
 const RENDER_PROJECT_USING_LAST_SETTINGS_ACTION: u32 = 41824;
 const OTIO_EXT_SECTION: &str = "levitanus_otio_export";
 const OTIO_FPS_POLICY_KEY: &str = "fps_policy";
+
+pub fn register_otio_export_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
+    rpr.register_action(
+        "LEVITANUS_OTIO_EXPORT",
+        "export OTIO timelines",
+        ActionKind::NotToggleable,
+        |_| export_otio_project(),
+        None,
+    )?;
+
+    rpr.register_action(
+        "LEVITANUS_OTIO_FPS_MEDIAN",
+        "set OTIO FPS to median",
+        ActionKind::NotToggleable,
+        |_| set_project_fps(OtioFpsPolicy::MedianVideo),
+        None,
+    )?;
+
+    rpr.register_action(
+        "LEVITANUS_OTIO_FPS_PROJECT",
+        "set OTIO FPS to Project FPS",
+        ActionKind::NotToggleable,
+        |_| set_project_fps(OtioFpsPolicy::Project),
+        None,
+    )?;
+
+    rpr.register_action(
+        "LEVITANUS_OTIO_FPS_FIRST_VIDEO",
+        "set OTIO FPS to first video in timeline",
+        ActionKind::NotToggleable,
+        |_| set_project_fps(OtioFpsPolicy::FirstVideo),
+        None,
+    )?;
+
+    rpr.register_action(
+        "LEVITANUS_OTIO_YOUTUBE_TIMECODES",
+        "export YouTube timecodes from markers",
+        ActionKind::NotToggleable,
+        |_| export_youtube_timecodes(),
+        None,
+    )?;
+    Ok(())
+}
 
 #[derive(Debug, Clone)]
 struct RenderBound {

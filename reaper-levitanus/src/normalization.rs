@@ -1,6 +1,24 @@
-use rea_rs::{Reaper, UndoFlags, Volume};
+use rea_rs::{ActionKind, Reaper, UndoFlags, Volume};
 
 use crate::LevitanusError;
+
+pub fn register_normalization_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
+    rpr.register_action(
+        "LEVITANUS_NORM_TAKES",
+        "normalize_all_takes_on_selected_items",
+        ActionKind::NotToggleable,
+        |_| normalize_all_takes_on_selected_items(false.into()),
+        None,
+    )?;
+    rpr.register_action(
+        "LEVITANUS_NORM_TAKES_CM_GN",
+        "normalize_all_takes_on_selected_items (common gain)",
+        ActionKind::NotToggleable,
+        |_| normalize_all_takes_on_selected_items(true.into()),
+        None,
+    )?;
+    Ok(())
+}
 
 pub fn normalize_all_takes_on_selected_items(
     common_gain: Option<bool>,
@@ -32,7 +50,7 @@ pub fn normalize_all_takes_on_selected_items(
             let end = start + length;
             let norm_amount = take.source()?.unwrap().calculate_normalization(
                 rea_rs::SourceNoramlizeUnit::TruePeak,
-                Volume::from(1.0),
+                Volume::from_db(1.0),
                 start,
                 end,
             )?;
@@ -62,7 +80,7 @@ pub fn normalize_all_takes_on_selected_items(
                         .into())
                     }
                 };
-                take.set_volume(max_gain.into())?;
+                take.set_volume(max_gain.try_into()?)?;
             }
         }
     }

@@ -3,12 +3,12 @@ use thiserror::Error;
 
 pub mod envelope_snap;
 // pub mod ffmpeg;
-pub mod autofreeze;
-pub mod ffmpeg_new;
+// pub mod autofreeze;
+// pub mod ffmpeg_new;
 pub mod normalization;
-pub mod otio_export;
-pub mod utils;
+// pub mod otio_export;
 pub mod score;
+pub mod utils;
 
 #[derive(Debug, Error)]
 pub enum LevitanusError {
@@ -32,6 +32,8 @@ pub enum LevitanusError {
     TrackValidationError(String),
     #[error("Invalid object")]
     InvalidObject,
+    #[error("Active take is not MIDI take")]
+    NoMidi,
 }
 
 type LevitanusResult<T> = Result<T, LevitanusError>;
