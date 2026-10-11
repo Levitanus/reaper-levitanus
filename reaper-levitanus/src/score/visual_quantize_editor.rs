@@ -8,8 +8,8 @@ use rea_rs::{
         layout::{Insets, WidgetFills, WidgetSize},
         EditFieldOptions,
     },
-    ActionHook, Button, ComboBox, ComboBoxOptions, CommandId, EditField, ExtState, Reaper,
-    ReaperWindow, SwellId, WindowHandler, WindowSpec,
+    ActionHook, Button, ComboBox, ComboBoxOptions, CommandId, EditField, ExtState, Project, Reaper,
+    ReaperResult, ReaperWindow, SwellId, WindowHandler, WindowSpec,
 };
 use serde::{Deserialize, Serialize};
 
@@ -20,22 +20,54 @@ use crate::{
 
 const WINDOW_ID: &'static str = "RSVisualQuantizeEditor";
 
-pub(super) fn toggle_visual_quantize_editor(hook: &mut ActionHook) -> Result<()> {
+pub(super) fn toggle_visual_quantize_editor(
+    hook: &mut ActionHook,
+    mode: VisualQuantizeMode,
+) -> Result<()> {
     let rpr = Reaper::get_mut();
+    if rpr.is_window_registered(&WINDOW_ID.into()) {
+        rpr.unregister_window_handler(&WINDOW_ID.into())?;
+    };
     match hook.toggle_state().unwrap_or(false) {
         false => {
-            rpr.register_window_handler(Box::new(VisualQuantizeEditor::new()?))?;
+            rpr.register_window_handler(Box::new(VisualQuantizeEditor::new(mode)?))?;
             hook.set_toggle_state(true);
         }
         true => {
-            rpr.unregister_window_handler(&WINDOW_ID.into())?;
             hook.set_toggle_state(false);
         }
     }
     Ok(())
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct State {
+    grid_units: usize,
+    unit_type: usize,
+    tuplet_num: String,
+    tuplet_denom: String,
+}
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            grid_units: 6,
+            unit_type: 0,
+            tuplet_num: "5".to_owned(),
+            tuplet_denom: "2".to_owned(),
+        }
+    }
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(super) enum VisualQuantizeMode {
+    Voice(u8),
+    Staff(u8),
+    Part,
+    ProjectTimeline,
+    ProjectDefault,
+}
+
 pub(super) struct VisualQuantizeEditor {
+    mode: VisualQuantizeMode,
     window: ReaperWindow,
     grid_units: ComboBox,
     grid_units_list: Vec<Fraction>,
@@ -48,7 +80,7 @@ pub(super) struct VisualQuantizeEditor {
     cancel_button: Button,
 }
 impl VisualQuantizeEditor {
-    fn new() -> Result<Self> {
+    fn new(mode: VisualQuantizeMode) -> Result<Self> {
         let rpr = Reaper::get();
         let row_heigh = 25;
         let window = rpr.create_window(
@@ -124,7 +156,8 @@ impl VisualQuantizeEditor {
 
         window.show()?;
 
-        Ok(Self {
+        let mut obj = Self {
+            mode,
             window,
             grid_units,
             grid_units_list,
@@ -135,10 +168,12 @@ impl VisualQuantizeEditor {
             commit_button,
             apply_button,
             cancel_button,
-        })
+        };
+        obj.load_controls()?;
+        Ok(obj)
     }
 
-    fn apply_quantize(&self) -> anyhow::Result<()> {
+    fn get_quantize(&self) -> anyhow::Result<Option<VisualQuantize>> {
         let grid_idx = self.grid_units.selection()?.unwrap_or_default();
         let grid = self
             .grid_units_list
@@ -165,14 +200,14 @@ impl VisualQuantizeEditor {
                 let num: u32 = match self.tuplet_num.text()?.parse() {
                     Err(e) => {
                         error!("Can not parse numerator: {:?}", e);
-                        return Ok(());
+                        return Ok(None);
                     }
                     Ok(n) => n,
                 };
                 let denom: u32 = match self.tuplet_denom.text()?.parse() {
                     Err(e) => {
                         error!("Can not parse denominator: {:?}", e);
-                        return Ok(());
+                        return Ok(None);
                     }
                     Ok(n) => n,
                 };
@@ -183,9 +218,8 @@ impl VisualQuantizeEditor {
                 }
             }
         };
-        debug!("{:?}", vq);
 
-        Ok(())
+        Ok(Some(vq))
     }
 
     fn get_unit_type(&self) -> Result<&UnitType, anyhow::Error> {
@@ -197,7 +231,6 @@ impl VisualQuantizeEditor {
                 "unit_types_list".to_string(),
                 format!("{unit_idx}"),
             ))?;
-
         Ok(unit)
     }
 
@@ -215,6 +248,60 @@ impl VisualQuantizeEditor {
         ))?;
         Reaper::get_mut().set_action_toggle_state(id, false);
         Ok(Reaper::get_mut().unregister_window_handler(&WINDOW_ID.to_string())?)
+    }
+
+    fn apply_quantize(&self, vq: VisualQuantize) -> Result<()> {
+        debug!("Applying Visual Quantise: {:?}", vq);
+        Ok(())
+    }
+    fn save_controls(&self) -> Result<()> {
+        let pr = &Reaper::get().current_project();
+        let mut state = self.get_state(pr)?;
+        let grid_units = self.grid_units.selection()?.unwrap_or_default();
+        let unit_type = self.unit_type.selection()?.unwrap_or_default();
+        let tuplet_num = self.tuplet_num.text()?;
+        let tuplet_denom = self.tuplet_denom.text()?;
+        state.set(State {
+            grid_units,
+            unit_type,
+            tuplet_num,
+            tuplet_denom,
+        })?;
+        Ok(())
+    }
+    fn load_controls(&mut self) -> Result<()> {
+        let pr = &Reaper::get().current_project();
+        let state = self.get_state(pr)?.get()?.unwrap_or_default();
+        self.grid_units.select(state.grid_units as i32)?;
+        self.unit_type.select(state.unit_type as i32)?;
+        self.tuplet_num.set_text(&state.tuplet_num)?;
+        self.tuplet_denom.set_text(&state.tuplet_denom)?;
+        self.enable_tuplet_section()?;
+        Ok(())
+    }
+    fn get_state<'a>(&self, project: &'a Project) -> ReaperResult<ExtState<'a, State, Project>> {
+        ExtState::new(
+            EXT_SEXTION,
+            "quantize_editor_state",
+            State::default(),
+            true,
+            project,
+            None,
+        )
+    }
+
+    fn enable_tuplet_section(&mut self) -> Result<(), anyhow::Error> {
+        let unit = self.get_unit_type()?;
+        Ok(match unit {
+            UnitType::Tuplet => {
+                self.tuplet_num.enable(true)?;
+                self.tuplet_denom.enable(true)?;
+            }
+            _ => {
+                self.tuplet_num.enable(false)?;
+                self.tuplet_denom.enable(false)?;
+            }
+        })
     }
 }
 
@@ -246,12 +333,17 @@ impl WindowHandler for VisualQuantizeEditor {
             rea_rs::ControlEvent::ButtonClicked { control } => match control {
                 val if val == self.commit_button.id() => {
                     debug!("Commiting:");
-                    self.apply_quantize()?;
+                    if let Some(vq) = self.get_quantize()? {
+                        self.apply_quantize(vq)?;
+                        self.save_controls()?;
+                    }
                     return Ok(());
                 }
                 val if val == self.apply_button.id() => {
-                    debug!("Applying:");
-                    self.apply_quantize()?;
+                    if let Some(vq) = self.get_quantize()? {
+                        self.apply_quantize(vq)?;
+                        self.save_controls()?;
+                    }
                     return Ok(self.close()?);
                 }
                 val if val == self.cancel_button.id() => {
@@ -262,17 +354,7 @@ impl WindowHandler for VisualQuantizeEditor {
             },
             rea_rs::ControlEvent::ComboSelectionChanged { control } => {
                 if control == self.unit_type.id() {
-                    let unit = self.get_unit_type()?;
-                    match unit {
-                        UnitType::Tuplet => {
-                            self.tuplet_num.enable(true)?;
-                            self.tuplet_denom.enable(true)?;
-                        }
-                        _ => {
-                            self.tuplet_num.enable(false)?;
-                            self.tuplet_denom.enable(false)?;
-                        }
-                    }
+                    self.enable_tuplet_section()?;
                 }
             }
             event => warn!("unexpected event: {:?}", event),

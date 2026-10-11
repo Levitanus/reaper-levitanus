@@ -63,9 +63,11 @@ pub fn register_score_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
 
     let id = rpr.register_action(
         "LEVITANUS_SCORE_VQUANTIZE_EDITOR",
-        "rea-score: visual quantize editor",
+        "rea-score: visual quantize part",
         ActionKind::Toggleable(false),
-        toggle_visual_quantize_editor,
+        |hook| {
+            toggle_visual_quantize_editor(hook, visual_quantize_editor::VisualQuantizeMode::Part)
+        },
         ActionRegistrationOptions::new(ActionSections::Sections(vec![
             Section::MidiEditor,
             Section::MidiInlineEditor,
