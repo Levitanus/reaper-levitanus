@@ -1,16 +1,18 @@
 use core::fmt;
-use std::fmt::Display;
+use std::{fmt::Display, str::FromStr};
 
 use anyhow::Result;
+use fraction::Fraction;
 use itertools::Itertools;
 use log::{debug, warn};
 use rea_rs::{
-    flatten_midi_notes, Item, MidiEvent, MidiEventBuilder, MidiEventConsumer, MidiMessage,
-    MidiNoteEvent, Notation, NotationMessage, NoteOffMessage, NoteOnMessage, Reaper, Take,
+    flatten_midi_notes, CcShapeKind, Item, MidiEvent, MidiEventBuilder, MidiEventConsumer,
+    MidiMessage, MidiNoteEvent, Notation, NotationMessage, NoteOffMessage, NoteOnMessage, Position,
+    Reaper, Take,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::LevitanusError;
+use crate::{score::dom::VisualQuantize, LevitanusError};
 
 pub(super) fn mark_selected_notes_as_voice(voice: Option<u8>) -> anyhow::Result<()> {
     debug!("mark selected notes as voice {:?}", voice);
@@ -148,18 +150,59 @@ pub(super) trait SerializedNotation:
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct TrackNotation {
-    ppq_pos: u32,
-    notation: Vec<String>,
+    #[serde(rename = "vquantize", skip_serializing_if = "Option::is_none")]
+    visual_quintize: Option<(String, String, Option<u8>, Option<u8>, Option<u32>)>,
+}
+impl SerializedNotation for TrackNotation {}
+impl TrackNotation {
+    pub fn visual_quantize(&self) -> Result<Option<VisualQuantizeNotation>> {
+        let (unit, ratio, staff, voice, length) = match &self.visual_quintize {
+            None => return Ok(None),
+            Some(q) => q,
+        };
+        Ok(Some(VisualQuantizeNotation {
+            quantize: VisualQuantize {
+                unit: Fraction::from_str(&unit)?,
+                ratio: Fraction::from_str(&ratio)?,
+            },
+            staff: *staff,
+            voice: *voice,
+            length_ppq: *length,
+        }))
+    }
+    pub fn with_visual_quantize(mut self, quantize: &VisualQuantizeNotation) -> Self {
+        self.visual_quintize = Some((
+            quantize.quantize.unit.to_string(),
+            quantize.quantize.ratio.to_string(),
+            quantize.staff,
+            quantize.voice,
+            quantize.length_ppq,
+        ));
+        self
+    }
+    pub fn as_message(&self) -> Result<NotationMessage> {
+        let mut tokens = Vec::new();
+        self.to_token_stream(&mut tokens)?;
+        Ok(Notation::Track(tokens).into())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisualQuantizeNotation {
+    pub quantize: VisualQuantize,
+    pub staff: Option<u8>,
+    pub voice: Option<u8>,
+    pub length_ppq: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
-struct NoteNotation {
+pub struct NoteNotation {
     #[serde(rename = "voice", skip_serializing_if = "Option::is_none")]
-    voice: Option<u8>,
+    pub voice: Option<u8>,
     #[serde(rename = "staff", skip_serializing_if = "Option::is_none")]
-    staff: Option<u8>,
+    pub staff: Option<u8>,
 }
 impl SerializedNotation for NoteNotation {}
 
@@ -334,4 +377,26 @@ impl MidiProcessor {
 pub fn get_notations_of_item(item: Item) -> Result<TakeNotations> {
     let take = item.active_take()?;
     Ok(MidiProcessor::load(&take)?.get_notations())
+}
+
+pub fn insert_track_notation_in_opened_editor(
+    notation: TrackNotation,
+    position: Position,
+) -> Result<()> {
+    let Some(editor) = Reaper::get().active_midi_editor() else {
+        return Ok(());
+    };
+    let mut take = editor.get_active_take()?;
+    let mut notations = Vec::new();
+    notation.to_token_stream(&mut notations)?;
+    let event = MidiEvent::new(
+        position.as_ppq(&take)?,
+        false,
+        false,
+        CcShapeKind::default(),
+        NotationMessage::from(Notation::Track(notations)),
+    );
+
+    take.insert_midi_event(event, None)?;
+    Ok(())
 }

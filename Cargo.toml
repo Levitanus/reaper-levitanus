@@ -7,7 +7,6 @@ members = [
 
 [workspace.dependencies]
 rea-rs = {git = "https://github.com/Levitanus/rea-rs"}
-rea-rs-low = {git = "https://github.com/Levitanus/rea-rs"}
 rea-rs-macros = {git = "https://github.com/Levitanus/rea-rs"}
 rea-rs-test = {git = "https://github.com/Levitanus/rea-rs"}
 

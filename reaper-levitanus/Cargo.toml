@@ -7,7 +7,6 @@ version = "0.0.1"
 
 [dependencies]
 rea-rs = {workspace = true}
-rea-rs-low = {workspace = true}
 rea-rs-macros = {workspace = true}
 
 env_logger = {workspace = true}

@@ -8,13 +8,17 @@ use rea_rs::{
         layout::{Insets, WidgetFills, WidgetSize},
         EditFieldOptions,
     },
-    ActionHook, Button, ComboBox, ComboBoxOptions, CommandId, EditField, ExtState, Project, Reaper,
-    ReaperResult, ReaperWindow, SwellId, WindowHandler, WindowSpec,
+    ActionHook, Button, ComboBox, ComboBoxOptions, CommandId, EditField, ExtState, MidiEvent,
+    Project, Reaper, ReaperResult, ReaperWindow, SwellId, Take, WindowHandler, WindowSpec,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    score::{dom::VisualQuantize, EXT_SEXTION, QUANTIZE_EDITOR_COMMAND_ID},
+    score::{
+        dom::VisualQuantize,
+        midi_processing::{TrackNotation, VisualQuantizeNotation},
+        RuntimeState, EXT_SEXTION,
+    },
     LevitanusError,
 };
 
@@ -30,7 +34,10 @@ pub(super) fn toggle_visual_quantize_editor(
     };
     match hook.toggle_state().unwrap_or(false) {
         false => {
-            rpr.register_window_handler(Box::new(VisualQuantizeEditor::new(mode)?))?;
+            rpr.register_window_handler(Box::new(VisualQuantizeEditor::new(
+                mode,
+                hook.command_id(),
+            )?))?;
             hook.set_toggle_state(true);
         }
         true => {
@@ -57,18 +64,20 @@ impl Default for State {
         }
     }
 }
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub(super) enum VisualQuantizeMode {
-    Voice(u8),
-    Staff(u8),
-    Part,
-    ProjectTimeline,
+    #[default]
     ProjectDefault,
+    PartDefault,
+    Part,
+    Staff,
+    Voice,
 }
 
 pub(super) struct VisualQuantizeEditor {
-    mode: VisualQuantizeMode,
     window: ReaperWindow,
+    mode: VisualQuantizeMode,
+    command_id: CommandId,
     grid_units: ComboBox,
     grid_units_list: Vec<Fraction>,
     unit_type: ComboBox,
@@ -80,7 +89,7 @@ pub(super) struct VisualQuantizeEditor {
     cancel_button: Button,
 }
 impl VisualQuantizeEditor {
-    fn new(mode: VisualQuantizeMode) -> Result<Self> {
+    fn new(mode: VisualQuantizeMode, command_id: CommandId) -> Result<Self> {
         let rpr = Reaper::get();
         let row_heigh = 25;
         let window = rpr.create_window(
@@ -157,8 +166,9 @@ impl VisualQuantizeEditor {
         window.show()?;
 
         let mut obj = Self {
-            mode,
             window,
+            mode,
+            command_id,
             grid_units,
             grid_units_list,
             unit_type,
@@ -235,23 +245,66 @@ impl VisualQuantizeEditor {
     }
 
     fn close(&self) -> Result<()> {
-        let rpr = Reaper::get_mut();
-        let id = ExtState::<CommandId, Reaper>::load_value(
-            EXT_SEXTION,
-            QUANTIZE_EDITOR_COMMAND_ID,
-            rpr,
-            None,
-        )?
-        .ok_or(LevitanusError::KeyError(
-            "Reaper".to_owned(),
-            "quantize_editor_command_id".to_owned(),
-        ))?;
+        let id = self.command_id;
         Reaper::get_mut().set_action_toggle_state(id, false);
         Ok(Reaper::get_mut().unregister_window_handler(&WINDOW_ID.to_string())?)
     }
 
     fn apply_quantize(&self, vq: VisualQuantize) -> Result<()> {
         debug!("Applying Visual Quantise: {:?}", vq);
+        let runtime_state = RuntimeState::get()?;
+        let rpr = Reaper::get();
+        let pr = rpr.current_project();
+        match self.mode {
+            VisualQuantizeMode::ProjectDefault => todo!(),
+            VisualQuantizeMode::Part => {
+                let Some(editor) = rpr.active_midi_editor() else {
+                    return Ok(());
+                };
+                let take = editor.get_active_take()?;
+                let (length, position) = get_notation_params_from_time_selection(pr, &take)?;
+                let notation =
+                    TrackNotation::default().with_visual_quantize(&VisualQuantizeNotation {
+                        quantize: vq,
+                        staff: None,
+                        voice: None,
+                        length_ppq: length,
+                    });
+                insert_quantize_into_take(take, position, notation)?;
+            }
+            VisualQuantizeMode::Staff => {
+                let Some(editor) = rpr.active_midi_editor() else {
+                    return Ok(());
+                };
+                let take = editor.get_active_take()?;
+                let (length, position) = get_notation_params_from_time_selection(pr, &take)?;
+                let notation =
+                    TrackNotation::default().with_visual_quantize(&VisualQuantizeNotation {
+                        quantize: vq,
+                        staff: Some(runtime_state.staff_selected),
+                        voice: None,
+                        length_ppq: length,
+                    });
+                insert_quantize_into_take(take, position, notation)?;
+            }
+            VisualQuantizeMode::Voice => {
+                let Some(editor) = rpr.active_midi_editor() else {
+                    return Ok(());
+                };
+                let take = editor.get_active_take()?;
+                let (length, position) = get_notation_params_from_time_selection(pr, &take)?;
+                let notation =
+                    TrackNotation::default().with_visual_quantize(&VisualQuantizeNotation {
+                        quantize: vq,
+                        staff: Some(runtime_state.staff_selected),
+                        voice: Some(runtime_state.voice_selected),
+                        length_ppq: length,
+                    });
+                insert_quantize_into_take(take, position, notation)?;
+            }
+            VisualQuantizeMode::PartDefault => todo!(),
+        }
+
         Ok(())
     }
     fn save_controls(&self) -> Result<()> {
@@ -305,6 +358,39 @@ impl VisualQuantizeEditor {
     }
 }
 
+fn insert_quantize_into_take(
+    mut take: Take,
+    position: u32,
+    notation: TrackNotation,
+) -> Result<(), anyhow::Error> {
+    take.insert_midi_event(
+        MidiEvent::new(
+            position,
+            false,
+            false,
+            rea_rs::CcShapeKind::default(),
+            notation.as_message()?,
+        ),
+        None,
+    )?;
+    Ok(())
+}
+
+fn get_notation_params_from_time_selection(
+    pr: Project,
+    take: &Take,
+) -> Result<(Option<u32>, u32), anyhow::Error> {
+    match pr.get_time_selection()? {
+        Some(ts) => {
+            let range = ts.get()?;
+            let start = range.start.as_ppq(take)?;
+            let length = range.end.as_ppq(take)? - start;
+            Ok((Some(length), start))
+        }
+        None => Ok((None, pr.get_cursor_position()?.as_ppq(take)?)),
+    }
+}
+
 impl Display for UnitType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -331,21 +417,18 @@ impl WindowHandler for VisualQuantizeEditor {
     ) -> anyhow::Result<()> {
         match event {
             rea_rs::ControlEvent::ButtonClicked { control } => match control {
-                val if val == self.commit_button.id() => {
+                val if val == self.commit_button.id() || val == self.apply_button.id() => {
                     debug!("Commiting:");
                     if let Some(vq) = self.get_quantize()? {
                         self.apply_quantize(vq)?;
                         self.save_controls()?;
                     }
+                    if val == self.apply_button.id() {
+                        return Ok(self.close()?);
+                    }
                     return Ok(());
                 }
-                val if val == self.apply_button.id() => {
-                    if let Some(vq) = self.get_quantize()? {
-                        self.apply_quantize(vq)?;
-                        self.save_controls()?;
-                    }
-                    return Ok(self.close()?);
-                }
+
                 val if val == self.cancel_button.id() => {
                     debug!("closing");
                     return Ok(self.close()?);

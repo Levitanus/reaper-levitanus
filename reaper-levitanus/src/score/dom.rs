@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use fraction::{Fraction, Ratio};
+use fraction::{ConstOne, Fraction, Ratio};
 use musical_note::{Key, ResolvedNote};
 use rea_rs::TimeSignature;
 use serde::{Deserialize, Serialize};
@@ -80,4 +80,12 @@ pub(super) struct ScoreLength {
 pub(super) struct VisualQuantize {
     pub unit: Fraction,
     pub ratio: Fraction,
+}
+impl Default for VisualQuantize {
+    fn default() -> Self {
+        Self {
+            unit: Fraction::new(1_u64, 16_u64),
+            ratio: Fraction::ONE,
+        }
+    }
 }

@@ -1,8 +1,9 @@
 use anyhow::anyhow;
 use rea_rs::{
     keys::{FVirt, KeyBinding, VKeys},
-    ActionKind, ActionRegistrationOptions, ActionSections, ExtState, Reaper, Section,
+    ActionKind, ActionRegistrationOptions, ActionSections, ExtState, Reaper, ReaperResult, Section,
 };
+use serde::{Deserialize, Serialize};
 
 pub use crate::score::midi_processing::get_notations_of_item;
 use crate::score::{
@@ -18,12 +19,11 @@ mod musicxml_example;
 mod visual_quantize_editor;
 
 pub const EXT_SEXTION: &'static str = "REASCORE";
-pub const QUANTIZE_EDITOR_COMMAND_ID: &'static str = "quantize_editor_command_id";
 
 pub fn register_score_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
     rpr.register_action(
         "LEVITANUS_SCORE_MARK_VOICE_1",
-        "rea-score: move selected notes to the voice 1",
+        "ReaScore: move selected notes to the voice 1",
         rea_rs::ActionKind::NotToggleable,
         |_| mark_selected_notes_as_voice(None),
         ActionRegistrationOptions::new(ActionSections::Sections(vec![
@@ -37,7 +37,7 @@ pub fn register_score_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
     )?;
     rpr.register_action(
         "LEVITANUS_SCORE_MARK_VOICE_2",
-        "rea-score: move selected notes to the voice 2",
+        "ReaScore: move selected notes to the voice 2",
         rea_rs::ActionKind::NotToggleable,
         |_| mark_selected_notes_as_voice(Some(2)),
         ActionRegistrationOptions::new(ActionSections::Sections(vec![
@@ -48,22 +48,22 @@ pub fn register_score_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
     )?;
     rpr.register_action(
         "LEVITANUS_SCORE_MARK_STAFF_1",
-        "rea-score: move selected notes to the staff 1",
+        "ReaScore: move selected notes to the staff 1",
         rea_rs::ActionKind::NotToggleable,
         |_| mark_selected_notes_as_staff(None),
         None,
     )?;
     rpr.register_action(
         "LEVITANUS_SCORE_MARK_STAFF_2",
-        "rea-score: move selected notes to the staff 2",
+        "ReaScore: move selected notes to the staff 2",
         rea_rs::ActionKind::NotToggleable,
         |_| mark_selected_notes_as_staff(Some(2)),
         None,
     )?;
 
-    let id = rpr.register_action(
+    rpr.register_action(
         "LEVITANUS_SCORE_VQUANTIZE_EDITOR",
-        "rea-score: visual quantize part",
+        "ReaScore: visual quantize part (track)",
         ActionKind::Toggleable(false),
         |hook| {
             toggle_visual_quantize_editor(hook, visual_quantize_editor::VisualQuantizeMode::Part)
@@ -73,17 +73,21 @@ pub fn register_score_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
             Section::MidiInlineEditor,
         ])),
     )?;
-    ExtState::new(
-        EXT_SEXTION,
-        QUANTIZE_EDITOR_COMMAND_ID,
-        id.command_id,
-        false,
-        rpr,
-        None,
+    rpr.register_action(
+        "LEVITANUS_SCORE_VQUANTIZE_EDITOR",
+        "ReaScore: visual quantize default",
+        ActionKind::Toggleable(false),
+        |hook| {
+            toggle_visual_quantize_editor(
+                hook,
+                visual_quantize_editor::VisualQuantizeMode::ProjectDefault,
+            )
+        },
+        ActionRegistrationOptions::new(ActionSections::Section(Section::Main)),
     )?;
     rpr.register_action(
         "LEVITANUS_SCORE_EDITOR_OVERLAY",
-        "rea-score: toggle MIDI Editor overaly",
+        "ReaScore: toggle MIDI Editor overaly",
         ActionKind::Toggleable(false),
         toggle_midi_editor_overlay,
         ActionRegistrationOptions::new(ActionSections::Section(Section::MidiEditor)),
@@ -94,7 +98,7 @@ pub fn register_score_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
 pub fn register_score_test_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
     rpr.register_action(
         "LEVITANUS_SCORE_PRINT_ITEM_NOTATIONS",
-        "rea-score: print item notations",
+        "ReaScore: print item notations",
         rea_rs::ActionKind::NotToggleable,
         |_| {
             let item = Reaper::get()
@@ -108,4 +112,29 @@ pub fn register_score_test_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
         None,
     )?;
     Ok(())
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+struct RuntimeState {
+    staff_selected: u8,
+    voice_selected: u8,
+}
+impl RuntimeState {
+    pub(super) fn get() -> ReaperResult<Self> {
+        let rpr = Reaper::get();
+        Ok(Self::state(rpr).get()?.unwrap_or_default())
+    }
+    pub(super) fn set(&self) -> ReaperResult<()> {
+        let rpr = Reaper::get();
+        Self::state(rpr).set(self.clone())
+    }
+    fn state(reaper: &Reaper) -> ExtState<'_, Self, Reaper> {
+        ExtState::<RuntimeState, Reaper>::existing(
+            EXT_SEXTION,
+            "runtime_state",
+            false,
+            reaper,
+            None,
+        )
+    }
 }
