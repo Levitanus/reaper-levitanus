@@ -7,8 +7,8 @@ use itertools::Itertools;
 use log::{debug, warn};
 use rea_rs::{
     flatten_midi_notes, CcShapeKind, Item, MidiEvent, MidiEventBuilder, MidiEventConsumer,
-    MidiMessage, MidiNoteEvent, Notation, NotationMessage, NoteOffMessage, NoteOnMessage, Position,
-    Reaper, Take,
+    MidiMessage, MidiNoteEvent, Notation, NotationMessage, NoteOffMessage, NoteOnMessage, Reaper,
+    Take,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -379,24 +379,24 @@ pub fn get_notations_of_item(item: Item) -> Result<TakeNotations> {
     Ok(MidiProcessor::load(&take)?.get_notations())
 }
 
-pub fn insert_track_notation_in_opened_editor(
-    notation: TrackNotation,
-    position: Position,
-) -> Result<()> {
-    let Some(editor) = Reaper::get().active_midi_editor() else {
-        return Ok(());
-    };
-    let mut take = editor.get_active_take()?;
-    let mut notations = Vec::new();
-    notation.to_token_stream(&mut notations)?;
-    let event = MidiEvent::new(
-        position.as_ppq(&take)?,
-        false,
-        false,
-        CcShapeKind::default(),
-        NotationMessage::from(Notation::Track(notations)),
-    );
+// pub fn insert_track_notation_in_opened_editor(
+//     notation: TrackNotation,
+//     position: Time,
+// ) -> Result<()> {
+//     let Some(editor) = Reaper::get().active_midi_editor() else {
+//         return Ok(());
+//     };
+//     let mut take = editor.get_active_take()?;
+//     let mut notations = Vec::new();
+//     notation.to_token_stream(&mut notations)?;
+//     let event = MidiEvent::new(
+//         position.as_ppq(&take)?,
+//         false,
+//         false,
+//         CcShapeKind::default(),
+//         NotationMessage::from(Notation::Track(notations)),
+//     );
 
-    take.insert_midi_event(event, None)?;
-    Ok(())
-}
+//     take.insert_midi_event(event, None)?;
+//     Ok(())
+// }

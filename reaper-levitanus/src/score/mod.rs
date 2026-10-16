@@ -66,7 +66,7 @@ pub fn register_score_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
         "ReaScore: visual quantize part (track)",
         ActionKind::Toggleable(false),
         |hook| {
-            toggle_visual_quantize_editor(hook, visual_quantize_editor::VisualQuantizeMode::Part)
+            toggle_visual_quantize_editor(hook, visual_quantize_editor::VisualQuantizeMode::Track)
         },
         ActionRegistrationOptions::new(ActionSections::Sections(vec![
             Section::MidiEditor,

@@ -69,7 +69,7 @@ pub(super) enum VisualQuantizeMode {
     #[default]
     ProjectDefault,
     PartDefault,
-    Part,
+    Track,
     Staff,
     Voice,
 }
@@ -257,7 +257,7 @@ impl VisualQuantizeEditor {
         let pr = rpr.current_project();
         match self.mode {
             VisualQuantizeMode::ProjectDefault => todo!(),
-            VisualQuantizeMode::Part => {
+            VisualQuantizeMode::Track => {
                 let Some(editor) = rpr.active_midi_editor() else {
                     return Ok(());
                 };

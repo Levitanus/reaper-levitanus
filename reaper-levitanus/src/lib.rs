@@ -34,6 +34,9 @@ pub enum LevitanusError {
     InvalidObject,
     #[error("Active take is not MIDI take")]
     NoMidi,
+    /// Argument {name} is incorrect: {value}, {expectation}
+    #[error("Argument {0} is incorrect: {1}, {2}")]
+    InvalidArgument(&'static str, String, &'static str),
 }
 
 type LevitanusResult<T> = Result<T, LevitanusError>;
