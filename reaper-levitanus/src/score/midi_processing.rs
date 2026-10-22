@@ -4,7 +4,7 @@ use std::{fmt::Display, str::FromStr};
 use anyhow::Result;
 use fraction::Fraction;
 use itertools::Itertools;
-use log::{debug, warn};
+use log::{debug, error, warn};
 use rea_rs::{
     flatten_midi_notes, CcShapeKind, Item, MidiEvent, MidiEventBuilder, MidiEventConsumer,
     MidiMessage, MidiNoteEvent, Notation, NotationMessage, NoteOffMessage, NoteOnMessage, Reaper,
@@ -12,9 +12,12 @@ use rea_rs::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::{score::dom::VisualQuantize, LevitanusError, LevitanusResult};
+use crate::{
+    score::dom::{VisualQuantize, VoicePosition},
+    LevitanusError, LevitanusResult,
+};
 
-pub(super) fn mark_selected_notes_as_voice(voice: Option<u8>) -> anyhow::Result<()> {
+pub(super) fn mark_selected_notes_as_voice(voice: u8) -> anyhow::Result<()> {
     debug!("mark selected notes as voice {:?}", voice);
     MidiProcessor::process_notes_in_editor(|notes_with_notations| {
         for note_w_n in notes_with_notations {
@@ -23,14 +26,16 @@ pub(super) fn mark_selected_notes_as_voice(voice: Option<u8>) -> anyhow::Result<
             }
             note_w_n.edit_notation(|notation| {
                 let mut notation = notation.unwrap_or_default();
-                notation.voice = voice;
+                let mut position = notation.voice.unwrap_or_default();
+                position.voice = voice;
+                notation.voice = Some(position);
                 Ok(Some(notation))
             })?;
         }
         Ok(())
     })
 }
-pub(super) fn mark_selected_notes_as_staff(staff: Option<u8>) -> anyhow::Result<()> {
+pub(super) fn mark_selected_notes_as_staff(staff: u8) -> anyhow::Result<()> {
     debug!("mark selected notes as staff {:?}", staff);
     MidiProcessor::process_notes_in_editor(|notes_with_notations| {
         for note_w_n in notes_with_notations {
@@ -39,7 +44,25 @@ pub(super) fn mark_selected_notes_as_staff(staff: Option<u8>) -> anyhow::Result<
             }
             note_w_n.edit_notation(|notation| {
                 let mut notation = notation.unwrap_or_default();
-                notation.staff = staff;
+                let mut position = notation.voice.unwrap_or_default();
+                position.staff = staff;
+                notation.voice = Some(position);
+                Ok(Some(notation))
+            })?;
+        }
+        Ok(())
+    })
+}
+pub(super) fn clear_voice_position() -> anyhow::Result<()> {
+    debug!("clear_voice_position");
+    MidiProcessor::process_notes_in_editor(|notes_with_notations| {
+        for note_w_n in notes_with_notations {
+            if !note_w_n.note.is_selected {
+                continue;
+            }
+            note_w_n.edit_notation(|notation| {
+                let mut notation = notation.unwrap_or_default();
+                notation.voice = None;
                 Ok(Some(notation))
             })?;
         }
@@ -150,10 +173,10 @@ pub(super) trait SerializedNotation:
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct TrackNotation {
     #[serde(rename = "vquantize", skip_serializing_if = "Option::is_none")]
-    visual_quintize: Option<(String, String, Option<u8>, Option<u8>, Option<u32>)>,
+    visual_quintize: Option<(String, String, Option<u8>, Option<u8>, Option<f64>)>,
 }
 impl SerializedNotation for TrackNotation {}
 impl TrackNotation {
@@ -162,6 +185,20 @@ impl TrackNotation {
             None => return Ok(None),
             Some(q) => q,
         };
+        let voice_position = match (staff, voice) {
+            (None, None) => None,
+            (Some(staff), Some(voice)) => Some(VoicePosition {
+                staff: *staff,
+                voice: *voice,
+            }),
+            e => {
+                error!(
+                    "Unsupported variant of VoicePosition: {:?}. Returning default",
+                    e
+                );
+                Some(VoicePosition::default())
+            }
+        };
         Ok(Some(VisualQuantizeNotation {
             quantize: VisualQuantize {
                 unit: Fraction::from_str(&unit)
@@ -169,18 +206,21 @@ impl TrackNotation {
                 ratio: Fraction::from_str(&ratio)
                     .map_err(|e| LevitanusError::Unexpected(format!("ParseError: {:?}", e)))?,
             },
-            staff: *staff,
-            voice: *voice,
-            length_ppq: *length,
+            voice_position,
+            length_qn: *length,
         }))
     }
     pub fn with_visual_quantize(mut self, quantize: &VisualQuantizeNotation) -> Self {
+        let (staff, voice) = match &quantize.voice_position {
+            Some(q) => (Some(q.staff), Some(q.voice)),
+            None => (None, None),
+        };
         self.visual_quintize = Some((
             quantize.quantize.unit.to_string(),
             quantize.quantize.ratio.to_string(),
-            quantize.staff,
-            quantize.voice,
-            quantize.length_ppq,
+            staff,
+            voice,
+            quantize.length_qn,
         ));
         self
     }
@@ -194,17 +234,14 @@ impl TrackNotation {
 #[derive(Debug, Clone, PartialEq)]
 pub struct VisualQuantizeNotation {
     pub quantize: VisualQuantize,
-    pub staff: Option<u8>,
-    pub voice: Option<u8>,
-    pub length_ppq: Option<u32>,
+    pub voice_position: Option<VoicePosition>,
+    pub length_qn: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct NoteNotation {
-    #[serde(rename = "voice", skip_serializing_if = "Option::is_none")]
-    pub voice: Option<u8>,
-    #[serde(rename = "staff", skip_serializing_if = "Option::is_none")]
-    pub staff: Option<u8>,
+    #[serde(rename = "vquantize", skip_serializing_if = "Option::is_none")]
+    pub voice: Option<VoicePosition>,
 }
 impl SerializedNotation for NoteNotation {}
 

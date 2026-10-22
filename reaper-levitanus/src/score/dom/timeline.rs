@@ -1,16 +1,17 @@
+use fraction::ToPrimitive;
 use indexmap::IndexMap;
-use itertools::{kmerge_by, Itertools};
+use itertools::Itertools;
 use log::{debug, error};
 use musical_note::Key;
 use rea_rs::{
-    quantize, MidiEvent, MidiMessage, NoteOnMessage, Project, RawMidiMessage, ReaperResult,
+    quantize, MidiEvent, Project, RawMidiMessage, ReaRsError, ReaperResult,
     TempoTimeSigMarkerFlags, Time, TimeSignature, Track,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
     score::{
-        dom::{Measure, MeasureID, PartSpec},
+        dom::{Measure, MeasureID, PartSpec, VoicePosition},
         midi_processing::{SerializedNotation, TrackNotation},
         ProjectSettings, VisualQuantize,
     },
@@ -69,32 +70,19 @@ impl Timeline {
         debug!("Parsed global TimeLine: {:#?}", obj);
         Ok(obj)
     }
+
     pub fn build_for_part(
         part: &mut PartSpec,
         project: &Project,
         global_timeline: impl Into<Option<Timeline>>,
     ) -> LevitanusResult<Self> {
-        let timeline = global_timeline
-            .into()
-            .unwrap_or(Timeline::parse_global(project)?);
-        let mut keep = Vec::new();
-        let mut tracks_midi = Vec::new();
-        for track_guid in part.tracks.iter() {
-            let track = match Track::from_guid(project, track_guid)? {
-                Some(t) => {
-                    keep.push(true);
-                    t
-                }
-                None => {
-                    keep.push(false);
-                    continue;
-                }
-            };
-            tracks_midi.push(iter_track_midi(&track)?);
-        }
-        let mut keep = keep.into_iter();
-        part.tracks.retain(|_| keep.next().unwrap());
-        let sorted = tracks_midi.into_iter().kmerge_by(|a, b| a.0 < b.0);
+        let mut timelines = PartTimelines::new(
+            global_timeline
+                .into()
+                .unwrap_or(Timeline::parse_global(project)?),
+        );
+        let part_midi = get_part_midi(part, project)?;
+        let sorted = part_midi;
         for (time, event) in sorted {
             let (specs, msg) = event.into_raw_parts();
             match msg.parse()? {
@@ -112,16 +100,103 @@ impl Timeline {
                             continue;
                         };
                         if let Some(vquantize) = track_notation.visual_quantize()? {
-                            todo!()
+                            timelines
+                                .with_timeline_mut(&vquantize.voice_position, |timeline| {
+                                    let quantized_time =
+                                        timeline.quantize_position(time, project)?;
+                                    let quantized_end = match &vquantize.length_qn {
+                                        None => None,
+                                        Some(qn) => {
+                                            let start_qn = time.as_quarters_abs(project)?;
+                                            let end_qn = start_qn + qn;
+                                            Some(Time::from_quarters_abs(end_qn, project)?)
+                                        }
+                                    };
+                                    Ok(timeline.insert_visual_quantize(
+                                        vquantize.quantize.clone(),
+                                        quantized_time,
+                                        quantized_end,
+                                    )?)
+                                })
+                                .map_err(|e| {
+                                    LevitanusError::Unexpected(format!(
+                                        "can not insert visual quantize: {:?}",
+                                        e
+                                    ))
+                                })?;
                         }
                     }
-                    rea_rs::Notation::Unknown(tokecs) => todo!(),
+                    rea_rs::Notation::Unknown(tokens) => todo!(),
                 },
                 _ => (),
             }
         }
         todo!();
     }
+
+    pub fn insert_visual_quantize(
+        &mut self,
+        vquantize: VisualQuantize,
+        position: Time,
+        end: Option<Time>,
+    ) -> LevitanusResult<()> {
+        todo!()
+    }
+
+    pub fn quantize_position(&self, position: Time, project: &Project) -> ReaperResult<Time> {
+        for (time, vquantize) in self.visual_quantize.iter() {
+            if time < &position {
+                continue;
+            }
+            let mut vquantize = vquantize.clone().into_iter();
+            let mut interval = vquantize.next().expect("should be at least one vquantize");
+            for q in vquantize {
+                interval.unit = q.unit;
+                interval.ratio *= q.ratio;
+            }
+            let interval = (interval.unit * interval.ratio * 4).to_f64().ok_or({
+                ReaRsError::UnsuccessfulOperationString(format!(
+                    "Can not convert interval into quarter notes: {:?}",
+                    interval
+                ))
+            })?;
+            let quantized = quantize::by_quarters(
+                *time,
+                interval,
+                position.as_quarters_abs(project)?,
+                project,
+            )?;
+            return Time::from_quarters_abs(quantized, project);
+        }
+        Err(ReaRsError::UnsuccessfulOperation(
+            "Given time is probably less than project start",
+        ))
+    }
+}
+
+fn get_part_midi(
+    part: &mut PartSpec,
+    project: &Project,
+) -> Result<impl Iterator<Item = (Time, MidiEvent<RawMidiMessage>)>, LevitanusError> {
+    let mut keep = Vec::new();
+    let mut tracks_midi = Vec::new();
+    for track_guid in part.tracks.iter() {
+        let track = match Track::from_guid(project, track_guid)? {
+            Some(t) => {
+                keep.push(true);
+                t
+            }
+            None => {
+                keep.push(false);
+                continue;
+            }
+        };
+        tracks_midi.push(iter_track_midi(&track)?);
+    }
+    let mut keep = keep.into_iter();
+    part.tracks.retain(|_| keep.next().unwrap());
+    let part_midi = tracks_midi.into_iter().kmerge_by(|a, b| a.0 < b.0);
+    Ok(part_midi)
 }
 
 fn iter_track_midi(
@@ -214,5 +289,67 @@ pub struct GlobalNotationEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartTimelines {
-    timelines: IndexMap<(u8, u8), Timeline>,
+    timelines: IndexMap<VoicePosition, Timeline>,
+}
+impl PartTimelines {
+    pub fn new(global_timeline: Timeline) -> Self {
+        let mut timelines = IndexMap::new();
+        timelines.insert(VoicePosition::default(), global_timeline);
+        Self { timelines }
+    }
+    #[inline]
+    pub fn timeline(&self, voice_position: &VoicePosition) -> &Timeline {
+        self.timelines.get(voice_position).unwrap_or_else(|| {
+            self.timelines
+                .get(&VoicePosition::default())
+                .expect("has to be global timeline")
+        })
+    }
+    #[inline]
+    pub fn timeline_mut(&mut self, voice_position: &VoicePosition) -> &mut Timeline {
+        match self.timelines.get_mut(voice_position) {
+            Some(t) => t,
+            None => {
+                self.timelines.insert(
+                    *voice_position,
+                    self.timeline(&VoicePosition::default()).clone(),
+                );
+                self.timeline_mut(voice_position)
+            }
+        }
+    }
+
+    #[inline]
+    pub fn with_timeline(
+        &self,
+        voice_position: &Option<VoicePosition>,
+        mut f: impl FnMut(&Timeline) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        match voice_position {
+            Some(v) => f(self.timeline(v)),
+            None => {
+                for timeline in self.timelines.values() {
+                    f(timeline)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    #[inline]
+    pub fn with_timeline_mut(
+        &mut self,
+        voice_position: &Option<VoicePosition>,
+        mut f: impl FnMut(&mut Timeline) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        match voice_position {
+            Some(v) => f(self.timeline_mut(v)),
+            None => {
+                for timeline in self.timelines.values_mut() {
+                    f(timeline)?;
+                }
+                Ok(())
+            }
+        }
+    }
 }

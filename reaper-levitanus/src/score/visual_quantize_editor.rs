@@ -269,9 +269,8 @@ impl VisualQuantizeEditor {
                 let notation =
                     TrackNotation::default().with_visual_quantize(&VisualQuantizeNotation {
                         quantize: vq,
-                        staff: None,
-                        voice: None,
-                        length_ppq: length,
+                        voice_position: None,
+                        length_qn: length,
                     });
                 insert_quantize_into_take(take, position, notation)?;
             }
@@ -383,12 +382,12 @@ fn insert_quantize_into_take(
 fn get_notation_params_from_time_selection(
     pr: Project,
     take: &Take,
-) -> Result<(Option<u32>, u32), anyhow::Error> {
+) -> Result<(Option<f64>, u32), anyhow::Error> {
     match pr.get_time_selection()? {
         Some(ts) => {
             let range = ts.get()?;
             let start = range.start.as_ppq(take)?;
-            let length = range.end.as_ppq(take)? - start;
+            let length = range.end.as_quarters_abs(&pr)? - range.start.as_quarters_abs(&pr)?;
             Ok((Some(length), start))
         }
         None => Ok((None, pr.get_cursor_position()?.as_ppq(take)?)),

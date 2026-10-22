@@ -108,3 +108,16 @@ impl VisualQuantize {
             )))
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct VoicePosition {
+    #[serde(rename = "voice")]
+    pub voice: u8,
+    #[serde(rename = "staff")]
+    pub staff: u8,
+}
+impl Default for VoicePosition {
+    fn default() -> Self {
+        Self { voice: 1, staff: 1 }
+    }
+}

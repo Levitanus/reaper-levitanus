@@ -12,7 +12,9 @@ pub use crate::score::midi_processing::get_notations_of_item;
 use crate::score::{
     dom::{PartId, VisualQuantize},
     midi_editor_overlay::toggle_midi_editor_overlay,
-    midi_processing::{mark_selected_notes_as_staff, mark_selected_notes_as_voice},
+    midi_processing::{
+        clear_voice_position, mark_selected_notes_as_staff, mark_selected_notes_as_voice,
+    },
     visual_quantize_editor::toggle_visual_quantize_editor,
 };
 
@@ -29,7 +31,7 @@ pub fn register_score_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
         "LEVITANUS_SCORE_MARK_VOICE_1",
         "ReaScore: move selected notes to the voice 1",
         rea_rs::ActionKind::NotToggleable,
-        |_| mark_selected_notes_as_voice(None),
+        |_| mark_selected_notes_as_voice(1),
         ActionRegistrationOptions::new(ActionSections::Sections(vec![
             Section::Main,
             Section::MidiEditor,
@@ -43,7 +45,7 @@ pub fn register_score_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
         "LEVITANUS_SCORE_MARK_VOICE_2",
         "ReaScore: move selected notes to the voice 2",
         rea_rs::ActionKind::NotToggleable,
-        |_| mark_selected_notes_as_voice(Some(2)),
+        |_| mark_selected_notes_as_voice(2),
         ActionRegistrationOptions::new(ActionSections::Sections(vec![
             Section::Main,
             Section::MidiEditor,
@@ -54,14 +56,21 @@ pub fn register_score_actions(rpr: &mut Reaper) -> anyhow::Result<()> {
         "LEVITANUS_SCORE_MARK_STAFF_1",
         "ReaScore: move selected notes to the staff 1",
         rea_rs::ActionKind::NotToggleable,
-        |_| mark_selected_notes_as_staff(None),
+        |_| mark_selected_notes_as_staff(1),
         None,
     )?;
     rpr.register_action(
         "LEVITANUS_SCORE_MARK_STAFF_2",
         "ReaScore: move selected notes to the staff 2",
         rea_rs::ActionKind::NotToggleable,
-        |_| mark_selected_notes_as_staff(Some(2)),
+        |_| mark_selected_notes_as_staff(2),
+        None,
+    )?;
+    rpr.register_action(
+        "LEVITANUS_SCORE_CLEAR_VOICE",
+        "ReaScore: clear voice and staff notation of selected notes",
+        rea_rs::ActionKind::NotToggleable,
+        |_| clear_voice_position(),
         None,
     )?;
 
