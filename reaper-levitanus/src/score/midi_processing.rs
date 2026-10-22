@@ -12,7 +12,7 @@ use rea_rs::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::{score::dom::VisualQuantize, LevitanusError};
+use crate::{score::dom::VisualQuantize, LevitanusError, LevitanusResult};
 
 pub(super) fn mark_selected_notes_as_voice(voice: Option<u8>) -> anyhow::Result<()> {
     debug!("mark selected notes as voice {:?}", voice);
@@ -157,15 +157,17 @@ pub struct TrackNotation {
 }
 impl SerializedNotation for TrackNotation {}
 impl TrackNotation {
-    pub fn visual_quantize(&self) -> Result<Option<VisualQuantizeNotation>> {
+    pub fn visual_quantize(&self) -> LevitanusResult<Option<VisualQuantizeNotation>> {
         let (unit, ratio, staff, voice, length) = match &self.visual_quintize {
             None => return Ok(None),
             Some(q) => q,
         };
         Ok(Some(VisualQuantizeNotation {
             quantize: VisualQuantize {
-                unit: Fraction::from_str(&unit)?,
-                ratio: Fraction::from_str(&ratio)?,
+                unit: Fraction::from_str(&unit)
+                    .map_err(|e| LevitanusError::Unexpected(format!("ParseError: {:?}", e)))?,
+                ratio: Fraction::from_str(&ratio)
+                    .map_err(|e| LevitanusError::Unexpected(format!("ParseError: {:?}", e)))?,
             },
             staff: *staff,
             voice: *voice,
@@ -216,9 +218,9 @@ impl<T: Display + ?Sized> fmt::Debug for DisplayAsDebug<'_, T> {
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct TakeNotations {
-    notes_with_notation: Vec<NoteWithNotation>,
-    track_notations: Vec<MidiEvent<NotationMessage>>,
-    unknown_notations: Vec<MidiEvent<NotationMessage>>,
+    pub notes_with_notation: Vec<NoteWithNotation>,
+    pub track_notations: Vec<MidiEvent<NotationMessage>>,
+    pub unknown_notations: Vec<MidiEvent<NotationMessage>>,
 }
 impl fmt::Debug for TakeNotations {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -249,7 +251,7 @@ pub struct MidiProcessor {
     buf: Vec<u8>,
 }
 impl MidiProcessor {
-    fn process_notes_in_editor(
+    pub fn process_notes_in_editor(
         mut f: impl FnMut(&mut Vec<NoteWithNotation>) -> Result<()>,
     ) -> Result<()> {
         let rpr = Reaper::get();
@@ -267,7 +269,7 @@ impl MidiProcessor {
         }
         Ok(())
     }
-    fn load(take: &Take) -> Result<Self> {
+    pub fn load(take: &Take) -> LevitanusResult<Self> {
         if !take.is_midi()? {
             return Err(LevitanusError::NoMidi.into());
         }
@@ -275,14 +277,14 @@ impl MidiProcessor {
         let buf = take.get_midi(None)?;
         Ok(Self { buf })
     }
-    fn set(self, take: &mut Take) -> Result<()> {
+    pub fn set(self, take: &mut Take) -> LevitanusResult<()> {
         debug!("applying midi to take");
         Ok(take.set_midi(self.buf)?)
     }
-    fn events(&self) -> MidiEventBuilder<impl Iterator<Item = u8> + '_> {
+    pub fn events(&self) -> MidiEventBuilder<impl Iterator<Item = u8> + '_> {
         MidiEventBuilder::new(self.buf.iter().copied())
     }
-    fn get_notations(&self) -> TakeNotations {
+    pub fn get_notations(&self) -> TakeNotations {
         let mut notes_with_notation: Vec<NoteWithNotation> = self
             .events()
             .filter_notes()
@@ -294,7 +296,8 @@ impl MidiProcessor {
         let mut track_notations = Vec::new();
         let mut unknown_notations = Vec::new();
         for event in self.events() {
-            let Some(msg) = NotationMessage::from_raw(event.message().get_raw()) else {
+            let (spec, msg) = event.into_raw_parts();
+            let Some(msg) = NotationMessage::from_raw(msg.into_raw()) else {
                 continue;
             };
             match msg.notation() {
@@ -304,19 +307,19 @@ impl MidiProcessor {
                     tokens: _,
                 } => {
                     for note in notes_with_notation.iter_mut() {
-                        if note.note.start_in_ppq == event.ppq_position()
+                        if note.note.start_in_ppq == spec.ppq_position()
                             && note.note.channel == channel
                             && note.note.note == n_note
                         {
-                            let notation_event = MidiEvent::with_new_message(event, msg);
+                            let notation_event = MidiEvent::from_raw_parts(spec, msg);
                             note.notation = Some(notation_event);
                             break;
                         }
                     }
                 }
-                Notation::Track(_) => track_notations.push(MidiEvent::with_new_message(event, msg)),
+                Notation::Track(_) => track_notations.push(MidiEvent::from_raw_parts(spec, msg)),
                 Notation::Unknown(_) => {
-                    unknown_notations.push(MidiEvent::with_new_message(event, msg))
+                    unknown_notations.push(MidiEvent::from_raw_parts(spec, msg))
                 }
             }
         }
@@ -326,7 +329,7 @@ impl MidiProcessor {
             unknown_notations,
         }
     }
-    fn apply_notations(&mut self, notations: TakeNotations) {
+    pub fn apply_notations(&mut self, notations: TakeNotations) {
         // let note_events = ;
         let events =
             self.events()
@@ -353,18 +356,21 @@ impl MidiProcessor {
                 .chain(notations.notes_with_notation.iter().filter_map(
                     |item| match &item.notation {
                         None => None,
-                        Some(event) => Some(MidiEvent::with_new_message(
-                            event.clone(),
-                            event.message().as_raw_message(),
-                        )),
+                        Some(event) => Some(event.clone().into_raw_event()),
                     },
                 ))
-                .chain(notations.track_notations.iter().map(|event| {
-                    MidiEvent::with_new_message(event.clone(), event.message().as_raw_message())
-                }))
-                .chain(notations.unknown_notations.iter().map(|event| {
-                    MidiEvent::with_new_message(event.clone(), event.message().as_raw_message())
-                }))
+                .chain(
+                    notations
+                        .track_notations
+                        .iter()
+                        .map(|event| event.clone().into_raw_event()),
+                )
+                .chain(
+                    notations
+                        .unknown_notations
+                        .iter()
+                        .map(|event| event.clone().into_raw_event()),
+                )
                 .sorted_by(|first, other| {
                     first
                         .partial_cmp(&other)
@@ -374,7 +380,7 @@ impl MidiProcessor {
     }
 }
 
-pub fn get_notations_of_item(item: Item) -> Result<TakeNotations> {
+pub fn get_notations_of_item(item: Item) -> LevitanusResult<TakeNotations> {
     let take = item.active_take()?;
     Ok(MidiProcessor::load(&take)?.get_notations())
 }

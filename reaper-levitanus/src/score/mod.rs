@@ -1,12 +1,16 @@
 use anyhow::anyhow;
+use musical_note::Key;
 use rea_rs::{
     keys::{FVirt, KeyBinding, VKeys},
-    ActionKind, ActionRegistrationOptions, ActionSections, ExtState, Reaper, ReaperResult, Section,
+    ptr_wrappers::MediaTrack,
+    ActionKind, ActionRegistrationOptions, ActionSections, ExtState, Project, Reaper, ReaperResult,
+    Section, Track,
 };
 use serde::{Deserialize, Serialize};
 
 pub use crate::score::midi_processing::get_notations_of_item;
 use crate::score::{
+    dom::{PartId, VisualQuantize},
     midi_editor_overlay::toggle_midi_editor_overlay,
     midi_processing::{mark_selected_notes_as_staff, mark_selected_notes_as_voice},
     visual_quantize_editor::toggle_visual_quantize_editor,
@@ -136,5 +140,38 @@ impl RuntimeState {
             reaper,
             None,
         )
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+struct ProjectSettings {
+    visual_quantize: VisualQuantize,
+    key: Key,
+}
+impl ProjectSettings {
+    pub(super) fn get(project: &Project) -> ReaperResult<Self> {
+        Ok(Self::state(project).get()?.unwrap_or_default())
+    }
+    pub(super) fn set(&self, project: &Project) -> ReaperResult<()> {
+        Self::state(project).set(self.clone())
+    }
+    fn state(project: &Project) -> ExtState<'_, Self, Project> {
+        ExtState::<Self, Project>::existing(EXT_SEXTION, "settings", false, project, None)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+struct TrackSettings {
+    part: PartId,
+}
+impl TrackSettings {
+    pub(super) fn get(track: &Track) -> ReaperResult<Self> {
+        Ok(Self::state(track).get()?.unwrap_or_default())
+    }
+    pub(super) fn set(&self, track: &Track) -> ReaperResult<()> {
+        Self::state(track).set(self.clone())
+    }
+    fn state(track: &Track) -> ExtState<'_, Self, Track> {
+        ExtState::<Self, Track>::existing(EXT_SEXTION, "settings", false, track, None)
     }
 }

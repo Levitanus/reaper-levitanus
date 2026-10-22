@@ -62,5 +62,5 @@ fn plugin_main(context: PluginContext) -> Result<(), anyhow::Error> {
 /// Show error box with OK button to user
 fn log_error(_title: impl Into<String>, error: impl Into<anyhow::Error>) {
     let error = error.into();
-    Reaper::get().show_console_msg(format!("Error occurred:\n{}", error.to_string()));
+    let _ = Reaper::get().show_console_msg(format!("Error occurred:\n{}", error.to_string()));
 }

@@ -9,17 +9,20 @@ use rea_rs::{
         EditFieldOptions,
     },
     ActionHook, Button, ComboBox, ComboBoxOptions, CommandId, EditField, ExtState, MidiEvent,
-    Project, Reaper, ReaperResult, ReaperWindow, SwellId, Take, WindowHandler, WindowSpec,
+    Project, Reaper, ReaperResult, ReaperWindow, SwellId, Take, Time, Track, WindowHandler,
+    WindowSpec,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
     score::{
         dom::VisualQuantize,
-        midi_processing::{TrackNotation, VisualQuantizeNotation},
-        RuntimeState, EXT_SEXTION,
+        midi_processing::{
+            MidiProcessor, SerializedNotation, TrackNotation, VisualQuantizeNotation,
+        },
+        ProjectSettings, RuntimeState, TrackSettings, EXT_SEXTION,
     },
-    LevitanusError,
+    LevitanusError, LevitanusResult,
 };
 
 const WINDOW_ID: &'static str = "RSVisualQuantizeEditor";
@@ -252,11 +255,11 @@ impl VisualQuantizeEditor {
 
     fn apply_quantize(&self, vq: VisualQuantize) -> Result<()> {
         debug!("Applying Visual Quantise: {:?}", vq);
-        let runtime_state = RuntimeState::get()?;
         let rpr = Reaper::get();
         let pr = rpr.current_project();
         match self.mode {
             VisualQuantizeMode::ProjectDefault => todo!(),
+            VisualQuantizeMode::PartDefault => todo!(),
             VisualQuantizeMode::Track => {
                 let Some(editor) = rpr.active_midi_editor() else {
                     return Ok(());
@@ -273,36 +276,37 @@ impl VisualQuantizeEditor {
                 insert_quantize_into_take(take, position, notation)?;
             }
             VisualQuantizeMode::Staff => {
-                let Some(editor) = rpr.active_midi_editor() else {
-                    return Ok(());
-                };
-                let take = editor.get_active_take()?;
-                let (length, position) = get_notation_params_from_time_selection(pr, &take)?;
-                let notation =
-                    TrackNotation::default().with_visual_quantize(&VisualQuantizeNotation {
-                        quantize: vq,
-                        staff: Some(runtime_state.staff_selected),
-                        voice: None,
-                        length_ppq: length,
-                    });
-                insert_quantize_into_take(take, position, notation)?;
+                todo!();
+                // let Some(editor) = rpr.active_midi_editor() else {
+                //     return Ok(());
+                // };
+                // let take = editor.get_active_take()?;
+                // let (length, position) = get_notation_params_from_time_selection(pr, &take)?;
+                // let notation =
+                //     TrackNotation::default().with_visual_quantize(&VisualQuantizeNotation {
+                //         quantize: vq,
+                //         staff: Some(runtime_state.staff_selected),
+                //         voice: None,
+                //         length_ppq: length,
+                //     });
+                // insert_quantize_into_take(take, position, notation)?;
             }
             VisualQuantizeMode::Voice => {
-                let Some(editor) = rpr.active_midi_editor() else {
-                    return Ok(());
-                };
-                let take = editor.get_active_take()?;
-                let (length, position) = get_notation_params_from_time_selection(pr, &take)?;
-                let notation =
-                    TrackNotation::default().with_visual_quantize(&VisualQuantizeNotation {
-                        quantize: vq,
-                        staff: Some(runtime_state.staff_selected),
-                        voice: Some(runtime_state.voice_selected),
-                        length_ppq: length,
-                    });
-                insert_quantize_into_take(take, position, notation)?;
+                todo!();
+                // let Some(editor) = rpr.active_midi_editor() else {
+                //     return Ok(());
+                // };
+                // let take = editor.get_active_take()?;
+                // let (length, position) = get_notation_params_from_time_selection(pr, &take)?;
+                // let notation =
+                //     TrackNotation::default().with_visual_quantize(&VisualQuantizeNotation {
+                //         quantize: vq,
+                //         staff: Some(runtime_state.staff_selected),
+                //         voice: Some(runtime_state.voice_selected),
+                //         length_ppq: length,
+                //     });
+                // insert_quantize_into_take(take, position, notation)?;
             }
-            VisualQuantizeMode::PartDefault => todo!(),
         }
 
         Ok(())
@@ -474,3 +478,58 @@ impl UnitType {
         }
     }
 }
+
+/*fn get_visual_quantize_for_position(
+    position: Time,
+    track: &Track,
+    staff: Option<u32>,
+    voice: Option<u32>,
+) -> LevitanusResult<VisualQuantize> {
+    let mut last = None;
+    for i in 0..track.n_items()? {
+        let take = track
+            .get_item(i)?
+            .ok_or(LevitanusError::InvalidObject)?
+            .active_take()?;
+        let processor = MidiProcessor::load(&take)?;
+        for mut event in processor.get_notations().track_notations {
+            if Time::from_ppq(event.ppq_position(), &take)? > position {
+                break;
+            }
+            event
+                .message_mut()
+                .edit_tokens(|tokens| {
+                    let Some(notation) = TrackNotation::from_token_stream(tokens) else {
+                        return Ok(());
+                    };
+                    if let Ok(Some(vq)) = notation.visual_quantize() {
+                        match voice {
+                            Some(voice) => {
+                                let staff = match staff {
+                                    Some(s) => s,
+                                    None => 1,
+                                };
+                                if vq.
+                            }
+                            None => {}
+                        };
+                    };
+
+                    Ok(())
+                })
+                .map_err(|e| LevitanusError::Unexpected(format!("{:?}", e)))?;
+        }
+    }
+    let last = match last {
+        Some(vq) => vq,
+        None => {
+            if let Some(vq) = TrackSettings::get(track)?.visual_quantize {
+                vq
+            } else {
+                ProjectSettings::get()?.visual_quantize
+            }
+        }
+    };
+    Ok(last)
+}
+*/
