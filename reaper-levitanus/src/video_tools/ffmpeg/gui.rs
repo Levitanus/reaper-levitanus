@@ -50,7 +50,7 @@ impl FfmpegGui {
     }
     fn rebuild(&mut self) -> Result<()> {
         let ui = self.window.build_ui()?;
-        let ui = ui.panel(rea_rs::Panel::Central)?;
+        // let ui = ui.panel(rea_rs::Panel::Central)?;
         let rpr = Reaper::get();
         match &mut self.state {
             GuiState::Init => {
@@ -96,6 +96,7 @@ impl FfmpegGui {
                     }
                 };
             }
+            GuiState::Normal => check_state()?,
         }
         Ok(())
     }
@@ -107,7 +108,7 @@ impl FfmpegGui {
         }
         let rpr = Reaper::get();
         let pr = rpr.current_project();
-        pr.get_render_settings()?.mode
+        self.state = GuiState::Normal;
         self.rebuild()
     }
     fn parse(&mut self) -> Result<()> {
@@ -165,6 +166,7 @@ impl WindowHandler for FfmpegGui {
                 }
                 _ => Ok(()),
             },
+            GuiState::Normal => check_state(),
         }
     }
     fn on_timer(&mut self, id: SwellId) -> anyhow::Result<()> {
@@ -199,8 +201,14 @@ impl WindowHandler for FfmpegGui {
                 }
                 Ok(())
             }
+            GuiState::Normal => check_state(),
         }
     }
+}
+
+#[deprecated]
+fn check_state() -> Result<()> {
+    Ok(())
 }
 
 enum GuiState {
@@ -210,4 +218,5 @@ enum GuiState {
         progress_id: SwellId,
         cancel_id: SwellId,
     },
+    Normal,
 }

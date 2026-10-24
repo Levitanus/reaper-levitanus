@@ -5,6 +5,7 @@ use rea_rs_test::*;
 // mod autofreeze;
 // mod score;
 // use crate::score::register_score_tests;
+mod video_tools;
 
 #[reaper_extension_plugin]
 fn test_extension(context: PluginContext) -> Result<(), anyhow::Error> {
@@ -14,6 +15,7 @@ fn test_extension(context: PluginContext) -> Result<(), anyhow::Error> {
     // register_score_tests(test, reaper)?;
 
     // test.push_test_step(TestStep::new("test_autofreeze", test_autofreeze));
+    video_tools::register_video_tests(test, reaper)?;
 
     Ok(())
 }
