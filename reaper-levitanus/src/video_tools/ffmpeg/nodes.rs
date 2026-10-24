@@ -1,18 +1,16 @@
 use std::{path::PathBuf, time::Duration};
 
-use rea_rs::Position;
+use rea_rs::Time;
 use serde::{Deserialize, Serialize};
 
 use crate::LevitanusError;
-
-use super::filters::Filter;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum NodeContent {
     Filter(Filter),
     Input {
         file: PathBuf,
-        source_offset: Position,
+        source_offset: Time,
         length: Duration,
     },
 }

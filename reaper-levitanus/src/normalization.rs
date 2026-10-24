@@ -46,7 +46,7 @@ pub fn normalize_all_takes_on_selected_items(
                     .into())
                 }
             };
-            let start = take.start_offset()?;
+            let start = take.source_offset()?;
             let end = start + length;
             let norm_amount = take.source()?.unwrap().calculate_normalization(
                 rea_rs::SourceNoramlizeUnit::TruePeak,

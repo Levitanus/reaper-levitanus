@@ -8,7 +8,7 @@ version = "0.1.0"
 env_logger = {workspace = true}
 log = {workspace = true}
 rea-rs = {workspace = true}
-rea-rs-low = {workspace = true}
+# rea-rs-low = {workspace = true}
 rea-rs-macros = {workspace = true}
 rea-rs-test = {workspace = true}
 reaper-levitanus = {path = "../reaper-levitanus"}

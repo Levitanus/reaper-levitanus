@@ -1,7 +1,7 @@
 use std::{num::ParseIntError, time::Duration};
 
-use egui::Color32;
 use itertools::Itertools;
+use rea_rs::Color;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -375,21 +375,19 @@ impl Default for FfmpegColor {
         }
     }
 }
-impl From<Color32> for FfmpegColor {
-    fn from(value: Color32) -> Self {
-        let alpha = value.a();
-        let color: u32 =
-            ((value.r() as u32) << 16) + ((value.g() as u32) << 8) + (value.b() as u32);
-        Self { color, alpha }
+impl From<Color> for FfmpegColor {
+    fn from(value: Color) -> Self {
+        let (r, g, b) = value.get();
+        let color: u32 = ((r as u32) << 16) + ((g as u32) << 8) + (b as u32);
+        Self { color, alpha: 0xff }
     }
 }
-impl Into<Color32> for FfmpegColor {
-    fn into(self) -> Color32 {
-        Color32::from_rgba_premultiplied(
+impl Into<Color> for FfmpegColor {
+    fn into(self) -> Color {
+        Color::new(
             (self.color >> 16) as u8,
             (self.color >> 8) as u8,
             (self.color % 0xffff00) as u8,
-            self.alpha,
         )
     }
 }

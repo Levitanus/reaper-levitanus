@@ -1,6 +1,4 @@
 use std::{
-    env::temp_dir,
-    error::Error,
     ffi::OsStr,
     fs::OpenOptions,
     io::Write,
@@ -9,6 +7,7 @@ use std::{
     sync::mpsc::{SendError, Sender},
 };
 
+use anyhow::anyhow;
 use lazy_static::lazy_static;
 use log::info;
 use path_absolutize::Absolutize;
@@ -226,36 +225,37 @@ fn parse_encoders(
         let mut info = Vec::new();
         let flatgs_string = cap["flags"].to_string();
         let mut flags = flatgs_string.chars();
-        let encoder_type = match flags.next().ok_or("can not read a char")? {
+        let encoder_type = match flags.next().ok_or(anyhow!("can not read a char"))? {
             'V' => EncoderType::Video,
             'A' => EncoderType::Audio,
             'S' => EncoderType::Subtitle,
             s => {
                 return Err(
-                    format!("Can not estimate encoder type {s}. The line is: {line}").into(),
+                    anyhow!("Can not estimate encoder type {s}. The line is: {line}").into(),
                 )
             }
         };
-        let frame_level_multithreading = match flags.next().ok_or("can not read a char")? {
+        let frame_level_multithreading = match flags.next().ok_or(anyhow!("can not read a char"))? {
             'F' => true,
             _ => false,
         };
-        let slice_level_multithreading = match flags.next().ok_or("can not read a char")? {
+        let slice_level_multithreading = match flags.next().ok_or(anyhow!("can not read a char"))? {
             'S' => true,
             _ => false,
         };
-        let is_experimenal = match flags.next().ok_or("can not read a char")? {
+        let is_experimenal = match flags.next().ok_or(anyhow!("can not read a char"))? {
             'X' => true,
             _ => false,
         };
-        let supports_draw_horiz_band = match flags.next().ok_or("can not read a char")? {
+        let supports_draw_horiz_band = match flags.next().ok_or(anyhow!("can not read a char"))? {
             'B' => true,
             _ => false,
         };
-        let supports_direct_rendering_method_1 = match flags.next().ok_or("can not read a char")? {
-            'D' => true,
-            _ => false,
-        };
+        let supports_direct_rendering_method_1 =
+            match flags.next().ok_or(anyhow!("can not read a char"))? {
+                'D' => true,
+                _ => false,
+            };
         let mut pixel_formats: Option<Vec<String>> = None;
 
         let mut options: Vec<Opt> = Vec::new();
@@ -344,15 +344,15 @@ fn parse_filters(
         let mut info = Vec::new();
         let flatgs_string = cap["flags"].to_string();
         let mut flags = flatgs_string.chars();
-        let timeline_support = match flags.next().ok_or("can not read a char")? {
+        let timeline_support = match flags.next().ok_or(anyhow!("can not read a char"))? {
             'T' => true,
             _ => false,
         };
-        let slice_level_multithreading = match flags.next().ok_or("can not read a char")? {
+        let slice_level_multithreading = match flags.next().ok_or(anyhow!("can not read a char"))? {
             'S' => true,
             _ => false,
         };
-        let command_support = match flags.next().ok_or("can not read a char")? {
+        let command_support = match flags.next().ok_or(anyhow!("can not read a char"))? {
             'C' => true,
             _ => false,
         };
@@ -435,23 +435,23 @@ fn parse_pix_fmts(
 
         let flags_string = cap["flags"].to_string();
         let mut flags = flags_string.chars();
-        let input_support = match flags.next().ok_or("can not read a char")? {
+        let input_support = match flags.next().ok_or(anyhow!("can not read a char"))? {
             'I' => true,
             _ => false,
         };
-        let output_support = match flags.next().ok_or("can not read a char")? {
+        let output_support = match flags.next().ok_or(anyhow!("can not read a char"))? {
             'O' => true,
             _ => false,
         };
-        let hardware_accelerated = match flags.next().ok_or("can not read a char")? {
+        let hardware_accelerated = match flags.next().ok_or(anyhow!("can not read a char"))? {
             'H' => true,
             _ => false,
         };
-        let paletted = match flags.next().ok_or("can not read a char")? {
+        let paletted = match flags.next().ok_or(anyhow!("can not read a char"))? {
             'P' => true,
             _ => false,
         };
-        let bitstream = match flags.next().ok_or("can not read a char")? {
+        let bitstream = match flags.next().ok_or(anyhow!("can not read a char"))? {
             'B' => true,
             _ => false,
         };
@@ -504,7 +504,7 @@ fn parse_option(line: &str, mut options: &mut Vec<Opt>) -> Result<ParseFlow, any
             items: Vec::new(),
             selected: None,
         },
-        t => return Err(format!("unknown type: {t}. The line was: {line}").into()),
+        t => return Err(anyhow!("unknown type: {t}. The line was: {line}")),
     };
     let default = if let Some(cap) = OPT_RE_DEFAULT.find(line) {
         Some(cap.as_str().to_string())
@@ -533,7 +533,7 @@ fn parse_enum(line: &str, options: &mut Vec<Opt>) -> Result<ParseFlow, anyhow::E
     };
     let last = options
         .last_mut()
-        .ok_or(format!("options are empty, line is {line}"))?;
+        .ok_or(anyhow!("options are empty, line is {line}"))?;
     let new_par = match &mut last.parameter {
         OptionParameter::Flags { items, selected: _ } => {
             items.push(cap["name"].to_string());
@@ -562,11 +562,10 @@ fn parse_enum(line: &str, options: &mut Vec<Opt>) -> Result<ParseFlow, anyhow::E
         }
         OptionParameter::Bool(_) => None,
         p => {
-            return Err(format!(
+            return Err(anyhow!(
                 "Can not convert option parameter to enum: {:?}. The line was: {line}",
                 p
-            )
-            .into())
+            ))
         }
     };
     if let Some(new_par) = new_par {
@@ -601,6 +600,7 @@ pub enum ParsingProgress {
 
 #[test]
 fn test_parsing() -> Result<(), anyhow::Error> {
+    use std::env::temp_dir;
     std::env::set_var("RUST_LOG", "debug");
     env_logger::try_init()?;
     parse_all(PathBuf::from(temp_dir()), None)?;

@@ -7,8 +7,9 @@ pub mod envelope_snap;
 // pub mod ffmpeg_new;
 pub mod normalization;
 // pub mod otio_export;
-pub mod score;
+// pub mod score;
 pub mod utils;
+pub mod video_tools;
 
 #[derive(Debug, Error)]
 pub enum LevitanusError {

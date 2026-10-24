@@ -1,8 +1,10 @@
+use std::{path::PathBuf, str::FromStr};
+
 use log::{debug, error};
 use rea_rs::{
-    AutomationMode, GenericSend, GenericSendMut, HardwareSend, Pan, PanLaw, Reaper, ReaperResult,
-    SendDestChannels, SendIntType, SendMIDIProps, SendMode, SendSourceChannels, SendType, Track,
-    TrackReceive, TrackSend, Volume, GUID,
+    AutomationMode, GUID, GenericSend, GenericSendMut, HardwareSend, Pan, PanLaw, Reaper,
+    ReaperResult, SendDestChannels, SendIntType, SendMIDIProps, SendMode, SendSourceChannels,
+    SendType, Track, TrackReceive, TrackSend, Volume,
 };
 use serde::{Deserialize, Serialize};
 
@@ -264,4 +266,9 @@ pub(crate) fn cache_and_remove_track_sends(track: &mut Track) -> ReaperResult<Ve
         let _ = send.delete();
     }
     Ok(sends)
+}
+
+pub fn extension_folder() -> ReaperResult<PathBuf> {
+    let resource_path = PathBuf::from(Reaper::get().get_resource_path()?);
+    Ok(resource_path.join("Data").join("reaper-levitanus"))
 }

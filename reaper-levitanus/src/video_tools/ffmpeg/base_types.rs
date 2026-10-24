@@ -3,7 +3,6 @@ use std::{fmt::Display, path::PathBuf, process::Command, time::Duration};
 use fraction::Fraction;
 use lazy_static::lazy_static;
 use log::debug;
-use rea_rs::SourceOffset;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -161,7 +160,7 @@ impl Timestamp for Duration {
         format!("{hours}:{mins}:{secs}.{millis:03}")
     }
 }
-impl Timestamp for rea_rs::SourceOffset {
+impl Timestamp for rea_rs::Time {
     fn timestump(&self) -> String {
         let delta = self.get();
         let hours = delta.num_hours();
