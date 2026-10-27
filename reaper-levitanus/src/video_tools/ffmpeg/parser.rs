@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::anyhow;
 use lazy_static::lazy_static;
-use log::info;
+use log::{debug, info, warn};
 use path_absolutize::Absolutize;
 use regex::Regex;
 
@@ -232,7 +232,7 @@ fn parse_encoders(
             s => {
                 return Err(
                     anyhow!("Can not estimate encoder type {s}. The line is: {line}").into(),
-                )
+                );
             }
         };
         let frame_level_multithreading = match flags.next().ok_or(anyhow!("can not read a char"))? {
@@ -311,9 +311,10 @@ fn parse_filters(
     let string = output_with_args(["-filters"])?;
     let lines = string.lines();
     let filter_re = Regex::new(
-        r"^(?<flags>[\w\.]{3})\s(?<name>\w+)\s+(?<inputs>V+)->(?<outputs>V+)\s+(?<description>\w.*)",
+        r"^(?<flags>[\w\.]{2,3})\s(?<name>\w+)\s+(?<inputs>V+)->(?<outputs>V+)\s+(?<description>\w.*)",
     )?;
     let info_end_re = Regex::new(r".*AVOptions:$")?;
+    debug!("unparsed filters: {:?}", lines);
 
     let mut filters = Vec::new();
     info!("collecting filters...");
@@ -344,18 +345,19 @@ fn parse_filters(
         let mut info = Vec::new();
         let flatgs_string = cap["flags"].to_string();
         let mut flags = flatgs_string.chars();
-        let timeline_support = match flags.next().ok_or(anyhow!("can not read a char"))? {
-            'T' => true,
-            _ => false,
-        };
-        let slice_level_multithreading = match flags.next().ok_or(anyhow!("can not read a char"))? {
-            'S' => true,
-            _ => false,
-        };
-        let command_support = match flags.next().ok_or(anyhow!("can not read a char"))? {
-            'C' => true,
-            _ => false,
-        };
+        let mut timeline_support = false;
+        let mut slice_level_multithreading = false;
+        let mut command_support = false;
+        while let Some(f) = flags.next() {
+            match f {
+                'T' => timeline_support = true,
+                'S' => slice_level_multithreading = true,
+                'C' => command_support = true,
+                '.' => (),
+                c => warn!("unexpected flag: {c}"),
+            }
+        }
+
         let n_sockets = (cap["inputs"].len(), cap["outputs"].len());
 
         let mut options: Vec<Opt> = Vec::new();
@@ -472,13 +474,13 @@ fn parse_pix_fmts(
         };
         pix_fmts.push(pix_format);
     }
-    let filters_string: String = serde_json::to_string_pretty(&pix_fmts)?;
+    let pix_fmts_string: String = serde_json::to_string_pretty(&pix_fmts)?;
     info!(
-        "\ndamping filters_string to the file: {}\n",
+        "\ndamping pix_fmts_string to the file: {}\n",
         out_file.absolutize()?.display()
     );
     let mut f = OpenOptions::new().write(true).create(true).open(out_file)?;
-    f.write_all(filters_string.as_bytes())?;
+    f.write_all(pix_fmts_string.as_bytes())?;
     Ok(())
 }
 
@@ -489,6 +491,7 @@ fn parse_option(line: &str, mut options: &mut Vec<Opt>) -> Result<ParseFlow, any
     let parameter = match &cap["type"] {
         "int" => OptionParameter::Int(None),
         "int64" => OptionParameter::Int(None),
+        "unsigned" => OptionParameter::Uint(None),
         "string" => OptionParameter::String(None),
         "float" => OptionParameter::Float(None),
         "double" => OptionParameter::Float(None),
@@ -504,6 +507,7 @@ fn parse_option(line: &str, mut options: &mut Vec<Opt>) -> Result<ParseFlow, any
             items: Vec::new(),
             selected: None,
         },
+
         t => return Err(anyhow!("unknown type: {t}. The line was: {line}")),
     };
     let default = if let Some(cap) = OPT_RE_DEFAULT.find(line) {
@@ -565,7 +569,7 @@ fn parse_enum(line: &str, options: &mut Vec<Opt>) -> Result<ParseFlow, anyhow::E
             return Err(anyhow!(
                 "Can not convert option parameter to enum: {:?}. The line was: {line}",
                 p
-            ))
+            ));
         }
     };
     if let Some(new_par) = new_par {
@@ -595,7 +599,7 @@ fn output_with_args(
 pub enum ParsingProgress {
     Progress(f32),
     Result(Result<(), String>),
-    Unparsed,
+    // Unparsed,
 }
 
 #[test]

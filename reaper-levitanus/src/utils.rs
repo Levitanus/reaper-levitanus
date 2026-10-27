@@ -2,9 +2,9 @@ use std::{path::PathBuf, str::FromStr};
 
 use log::{debug, error};
 use rea_rs::{
-    AutomationMode, GUID, GenericSend, GenericSendMut, HardwareSend, Pan, PanLaw, Reaper,
-    ReaperResult, SendDestChannels, SendIntType, SendMIDIProps, SendMode, SendSourceChannels,
-    SendType, Track, TrackReceive, TrackSend, Volume,
+    AutomationMode, GUID, GenericSend, GenericSendMut, HardwareSend, Pan, PanLaw, ReaRsError,
+    Reaper, ReaperResult, SendDestChannels, SendIntType, SendMIDIProps, SendMode,
+    SendSourceChannels, SendType, Track, TrackReceive, TrackSend, Volume,
 };
 use serde::{Deserialize, Serialize};
 
@@ -270,5 +270,9 @@ pub(crate) fn cache_and_remove_track_sends(track: &mut Track) -> ReaperResult<Ve
 
 pub fn extension_folder() -> ReaperResult<PathBuf> {
     let resource_path = PathBuf::from(Reaper::get().get_resource_path()?);
-    Ok(resource_path.join("Data").join("reaper-levitanus"))
+    let extension_path = resource_path.join("Data").join("reaper-levitanus");
+    if resource_path.exists() && !extension_path.exists() {
+        std::fs::create_dir_all(extension_path.clone()).map_err(ReaRsError::IoError)?;
+    }
+    Ok(extension_path)
 }

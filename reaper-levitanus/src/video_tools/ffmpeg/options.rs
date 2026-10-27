@@ -64,6 +64,7 @@ pub struct Opt {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd)]
 pub enum OptionParameter {
     Int(Option<i32>),
+    Uint(Option<u32>),
     String(Option<String>),
     Float(Option<f64>),
     Bool(Option<bool>),
@@ -87,6 +88,7 @@ impl OptionParameter {
     pub(crate) fn with_none(&mut self) -> Self {
         match self {
             Self::Int(_) => Self::Int(None),
+            Self::Uint(_) => Self::Int(None),
             Self::String(_) => Self::String(None),
             Self::Float(_) => Self::Float(None),
             Self::Bool(_) => Self::Bool(None),
@@ -124,6 +126,7 @@ impl OptionParameter {
     pub fn is_assigned(&self) -> bool {
         match self {
             Self::Int(a) => a.is_some(),
+            Self::Uint(a) => a.is_some(),
             Self::String(a) => a.is_some(),
             Self::Float(a) => a.is_some(),
             Self::Bool(a) => a.is_some(),
@@ -144,6 +147,10 @@ impl OptionParameter {
     pub fn ffmpeg_representation(&self) -> Option<String> {
         match self {
             Self::Int(n) => match n {
+                Some(n) => Some(format!("{}", n)),
+                None => None,
+            },
+            Self::Uint(n) => match n {
                 Some(n) => Some(format!("{}", n)),
                 None => None,
             },

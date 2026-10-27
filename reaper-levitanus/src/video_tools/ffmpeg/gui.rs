@@ -7,23 +7,32 @@ use std::{
 use anyhow::{anyhow, Result};
 use log::error;
 use rea_rs::{
-    ActionHook, CommandId, ControlEvent, ProgressBar, ProgressBarOptions, Reaper, ReaperWindow,
-    SwellId, WidgetSize, WindowHandler, WindowSpec,
+    ActionHook, CommandId, ControlEvent, Insets, ProgressBar, ProgressBarOptions, Reaper,
+    ReaperWindow, SwellId, WidgetSize, WindowHandler, WindowSpec,
 };
 
 use crate::{
     utils::extension_folder,
-    video_tools::ffmpeg::parser::{parse_all, ParsingProgress},
+    video_tools::ffmpeg::{
+        parser::{parse_all, ParsingProgress},
+        FfmpegProjectSettings,
+    },
     LevitanusError,
 };
 
+static FFMPEG_WIND_ID: &'static str = "FFMPEG_GUI";
+
 pub fn toggle_ffmpeg_gui(hook: &mut ActionHook) -> Result<()> {
+    let rpr = Reaper::get_mut();
     match hook.toggle_state().expect("should be toggle state here") {
         false => {
-            Reaper::get_mut()
-                .register_window_handler(Box::new(FfmpegGui::new(hook.command_id())?))?;
+            rpr.register_window_handler(Box::new(FfmpegGui::new(hook.command_id())?))?;
         }
-        true => todo!(),
+        true => {
+            if rpr.is_window_registered(&FFMPEG_WIND_ID.into()) {
+                rpr.unregister_window_handler(&FFMPEG_WIND_ID.into())?;
+            }
+        }
     }
     Ok(())
 }
@@ -37,7 +46,10 @@ struct FfmpegGui {
 impl FfmpegGui {
     fn new(command: CommandId) -> Result<Self> {
         let rpr = Reaper::get();
-        let spec = WindowSpec::new("Levitanus: ffmpeg GUI").allow_show(true);
+        let spec = WindowSpec::new("Levitanus: ffmpeg GUI")
+            .allow_show(true)
+            .min_size(300, 150)
+            .size(300, 150);
         let window = rpr.create_window(&spec)?;
         let timer_id = SwellId::new_timer();
         window.start_timer(timer_id, Duration::from_millis(150))?;
@@ -49,8 +61,7 @@ impl FfmpegGui {
         })
     }
     fn rebuild(&mut self) -> Result<()> {
-        let ui = self.window.build_ui()?;
-        // let ui = ui.panel(rea_rs::Panel::Central)?;
+        let ui = self.window.build_ui()?.with_insets(Insets::uniform(25));
         let rpr = Reaper::get();
         match &mut self.state {
             GuiState::Init => {
@@ -68,32 +79,25 @@ impl FfmpegGui {
                 }
             }
             GuiState::Parse {
-                rx,
+                rx: _,
                 progress_id,
+                last_progress,
                 cancel_id,
             } => {
-                match rx.try_recv()? {
+                match last_progress {
                     ParsingProgress::Progress(p) => {
                         let pbar = ui.progress_bar(
                             *progress_id,
-                            WidgetSize::new_fill_x(150, 50),
+                            WidgetSize::new_fill_x(100, 30),
                             ProgressBarOptions::empty(),
                         )?;
-                        pbar.set_position((p * 100.0) as i32)?;
-                        let row =
-                            ui.row(SwellId::new_control(), WidgetSize::new_fill_x(150, 30))?;
-                        row.button(*cancel_id, "Cancel", WidgetSize::fixed(100, 30))?;
+                        pbar.set_position((*p * 100.0) as i32)?;
+                        ui.button(*cancel_id, "Cancel", WidgetSize::fixed(100, 30))?;
                     }
                     ParsingProgress::Result(r) => match r {
                         Ok(_) => return self.update_state(),
                         Err(e) => return Err(anyhow!("{}", e)),
                     },
-                    ParsingProgress::Unparsed => {
-                        return Err(LevitanusError::Unexpected(
-                            "Unparsed state while parsing".to_owned(),
-                        )
-                        .into())
-                    }
                 };
             }
             GuiState::Normal => check_state()?,
@@ -108,6 +112,8 @@ impl FfmpegGui {
         }
         let rpr = Reaper::get();
         let pr = rpr.current_project();
+        let pr_settings = FfmpegProjectSettings::load(&pr)?;
+
         self.state = GuiState::Normal;
         self.rebuild()
     }
@@ -122,9 +128,10 @@ impl FfmpegGui {
         self.state = GuiState::Parse {
             rx,
             progress_id: SwellId::new_control(),
+            last_progress: ParsingProgress::Progress(0.0),
             cancel_id: SwellId::new_control(),
         };
-        Ok(())
+        self.rebuild()
     }
 
     fn close(&mut self) -> Result<()> {
@@ -135,7 +142,7 @@ impl FfmpegGui {
 }
 impl WindowHandler for FfmpegGui {
     fn window_id(&self) -> rea_rs::WindowId {
-        "FFMPEG_GUI".into()
+        FFMPEG_WIND_ID.into()
     }
 
     fn window(&self) -> &rea_rs::ReaperWindow {
@@ -156,6 +163,7 @@ impl WindowHandler for FfmpegGui {
             GuiState::Parse {
                 rx: _,
                 progress_id: _,
+                last_progress: _,
                 cancel_id,
             } => match event {
                 ControlEvent::ButtonClicked { control } => {
@@ -173,14 +181,16 @@ impl WindowHandler for FfmpegGui {
         if id != self.timer_id {
             return Ok(());
         }
-        match &self.state {
+        match &mut self.state {
             GuiState::Init => Ok(()),
             GuiState::Parse {
                 rx,
+                last_progress,
                 progress_id,
                 cancel_id: _,
             } => {
-                if let Ok(p) = rx.try_recv() {
+                while let Ok(p) = rx.try_recv() {
+                    *last_progress = p.clone();
                     match p {
                         ParsingProgress::Progress(p) => {
                             let handle = self.window.control(*progress_id).ok_or(
@@ -192,7 +202,6 @@ impl WindowHandler for FfmpegGui {
                             let control = ProgressBar::new(handle);
                             control.set_position((p * 100.0) as i32)?;
                         }
-                        ParsingProgress::Unparsed => self.parse()?,
                         ParsingProgress::Result(r) => match r {
                             Ok(_) => return self.update_state(),
                             Err(e) => return Err(anyhow!(e)),
@@ -215,6 +224,7 @@ enum GuiState {
     Init,
     Parse {
         rx: Receiver<ParsingProgress>,
+        last_progress: ParsingProgress,
         progress_id: SwellId,
         cancel_id: SwellId,
     },
