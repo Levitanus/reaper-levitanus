@@ -1,7 +1,7 @@
 use std::{
     ffi::OsStr,
-    fs::OpenOptions,
-    io::Write,
+    fs::{File, OpenOptions},
+    io::{BufReader, Write},
     path::PathBuf,
     process::Command,
     sync::mpsc::{SendError, Sender},
@@ -11,7 +11,10 @@ use anyhow::anyhow;
 use lazy_static::lazy_static;
 use log::{debug, info, warn};
 use path_absolutize::Absolutize;
+use rea_rs::ReaRsError;
 use regex::Regex;
+
+use crate::LevitanusError;
 
 use super::options::{
     Encoder, EncoderType, Muxer, Opt, OptionParameter, ParsedFilter, PixelFormat,
@@ -85,6 +88,43 @@ pub fn filters_path(out_dir: &PathBuf) -> PathBuf {
 
 pub fn pix_fmts_path(out_dir: &PathBuf) -> PathBuf {
     out_dir.join("pix_fmts.json")
+}
+
+pub fn load_parsed_files(out_dir: &PathBuf) -> Result<ParsedFiles, ReaRsError> {
+    if !check_parsed_paths(out_dir.clone()) {
+        return Err(ReaRsError::InvalidObject(
+            "no parsed files at the destination",
+        ));
+    };
+    let file = File::open(&muxers_path(out_dir))?;
+    let reader = BufReader::new(file);
+    let muxers = serde_json::from_reader(reader)
+        .map_err(|_| ReaRsError::UnsuccessfulOperation("can not deserialize muxers json"))?;
+    let file = File::open(&encoders_path(out_dir))?;
+    let reader = BufReader::new(file);
+    let encoders = serde_json::from_reader(reader)
+        .map_err(|_| ReaRsError::UnsuccessfulOperation("can not deserialize encoders json"))?;
+    let file = File::open(&filters_path(out_dir))?;
+    let reader = BufReader::new(file);
+    let filters = serde_json::from_reader(reader)
+        .map_err(|_| ReaRsError::UnsuccessfulOperation("can not deserialize filters json"))?;
+    let file = File::open(&pix_fmts_path(out_dir))?;
+    let reader = BufReader::new(file);
+    let pixel_formats = serde_json::from_reader(reader)
+        .map_err(|_| ReaRsError::UnsuccessfulOperation("can not deserialize pixel_formats json"))?;
+    Ok(ParsedFiles {
+        muxers,
+        encoders,
+        filters,
+        pixel_formats,
+    })
+}
+
+pub struct ParsedFiles {
+    pub muxers: Vec<Muxer>,
+    pub encoders: Vec<Encoder>,
+    pub filters: Vec<ParsedFilter>,
+    pub pixel_formats: Vec<PixelFormat>,
 }
 
 fn inc_progress(
